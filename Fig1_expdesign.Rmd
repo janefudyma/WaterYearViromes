@@ -1,0 +1,199 @@
+---
+title: "Figure 1 - Water Year"
+output: html_document
+date: "2025-03-17"
+---
+
+```{r}
+library(tidyverse)
+library(cowplot)
+library(ggpubr)
+```
+
+
+####################
+Experimental Design
+####################
+
+```{r}
+# Function to convert m/d to Date format (arbitrary year for plotting)
+convert_date <- function(md) as.Date(paste0("2022-", md), format = "%Y-%m/%d")
+
+sampling <- tribble(
+  ~site, ~sample_type, ~date, ~category,
+  "Angelo", "Virome", "3/16", "Plant Productivity",
+  "Angelo", "Virome", "4/6", "Plant Productivity",
+  "Angelo", "Virome", "4/27", "Plant Productivity",
+  "Angelo", "Virome", "5/19", "Dry Down",
+  "Angelo", "Virome", "6/15", "Dry Down",
+  "Angelo", "Virome", "11/14", "Wet Up",
+  "Angelo", "Metagenome", "4/27", "Plant Productivity",
+  "Angelo", "Metagenome", "5/19", "Dry Down",
+  "Angelo", "Metagenome", "6/1", "Dry Down",
+  "Angelo", "Metagenome", "9/15", "Wet Up", 
+  "Angelo", "Metagenome", "9/21","Wet Up",
+  "Hopland", "Virome", "3/16", "Plant Productivity",
+  "Hopland", "Virome", "4/6", "Plant Productivity",
+  "Hopland", "Virome", "4/27", "Plant Productivity",
+  "Hopland", "Virome", "5/11", "Dry Down",
+  "Hopland", "Virome", "11/14","Wet Up",
+  "Hopland", "Metagenome", "4/27", "Plant Productivity",
+  "Hopland", "Metagenome", "5/11", "Dry Down",
+  "Hopland", "Metagenome", "6/1", "Dry Down",
+  "Hopland", "Metagenome", "7/13", "Dry Down",
+  "Hopland", "Metagenome", "9/21", "Wet Up"
+) %>%
+  mutate(date = convert_date(date))
+
+phase_ranges <- sampling %>%
+  group_by(category) %>%
+  summarise(
+    start_date = min(date),
+    end_date   = max(date)
+  )
+```
+
+
+```{r}
+ang.precip <- read.csv("../Angelo_precip_dec.csv") %>% separate(Time, into = c("Date", "ClockTime"), sep = " ") %>% group_by(Date) %>% summarise(Precip..mm. = sum(Angelo.South.Meadow.Rainfall.mm)) %>% mutate(Date = as.Date(Date)) %>% mutate(Site = "Angelo")
+hop.precip <- read.csv("../Hopland_hourly_decemer.csv") %>% select(Date, Precip..mm.) %>% group_by(Date) %>% summarise(Precip..mm. = sum(Precip..mm.))%>% mutate(Date = as.Date(Date, format = "%m/%d/%Y")) %>% mutate(Site = "Hopland")
+
+precip <- rbind(ang.precip, hop.precip)
+```
+
+```{r}
+meta444 <- read.csv("../all_samples.csv") %>% filter(GWC.. != "NA", depth %in% c("0-10", "10-20")) %>% select(date_collected, location, depth, GWC..) %>% group_by(date_collected, location) %>% summarise(GWC = mean(GWC..)) %>% mutate(date_collected = as.Date(date_collected)) %>% mutate(Site = substr(location, 1,1)) %>% mutate(date_collected = as.Date(date_collected),  # ensure it’s a Date
+    date_collected = case_when(
+      date_collected == as.Date("2022-03-16") ~ as.Date("2022-03-17"),
+      TRUE ~ date_collected
+    ))
+
+meta2_summary <- meta444 %>%
+  group_by(Site, date_collected) %>%
+  mutate(mean_GWC = mean(GWC, na.rm = TRUE), .groups = "drop")
+```
+
+
+
+```{r}
+start_date <- as.Date("2022-03-01")
+end_date   <- as.Date("2022-11-30")
+
+#sampling$sample_type <- factor(sampling$sample_type, levels = c("Virome", "Metagenome"))
+phase_ranges$category  <- factor(phase_ranges$category, levels = c("Plant Productivity", "Dry Down", "Wet Up"))
+
+(timeline_plot <- ggplot() +
+
+  # Rectangles first
+  geom_rect(
+    data = phase_ranges,
+    aes(xmin = start_date - 5, xmax = end_date + 5,
+        ymin = -Inf, ymax = Inf, fill = category),
+    inherit.aes = FALSE,
+    alpha = 0.1
+  ) +
+  scale_fill_manual(
+    name = "Phase",
+    values = c("Plant Productivity" = "seagreen",
+               "Dry Down" = "burlywood",
+               "Wet Up" = "skyblue")
+  ) +
+
+  ggnewscale::new_scale_fill() +
+
+  # Points layer
+  geom_point(
+    data = sampling,
+    aes(
+      x = date,
+      y = factor(site, levels = c("Hopland", "Angelo")),
+      fill = sample_type,
+      shape = sample_type
+    ),
+    color = "black",
+    size = 6,
+    alpha = 1,
+    position = position_dodge(width = 0.4)
+  ) +
+  scale_fill_manual(
+    name = "Sample Type",
+    values = c("Virome" = "lightseagreen", "Metagenome" = "azure2"),  # colors assigned by name
+    breaks = c("Virome", "Metagenome")  # legend order
+  ) +
+  scale_shape_manual(
+    values = c("Virome" = 21, "Metagenome" = 21),
+    breaks = c("Virome", "Metagenome")  # legend order
+  ) +
+
+  # X-axis: set limits and keep tick marks at sampling dates
+scale_x_date(
+  limits = c(as.Date("2022-03-01"), as.Date("2022-11-30")),
+  breaks = unique(sampling$date),  # <-- only unique dates
+  date_labels = "%m/%d"
+) +
+
+  guides(
+    fill = guide_legend(
+      title = "Sample Type",
+      override.aes = list(shape = 21, color = "black", size = 6),
+      order = 1
+    ),
+    shape = guide_legend(
+      title = "Sample Type",
+      override.aes = list(fill = c( "lightseagreen", "azure2"), color = "black", size = 6),
+      order = 1
+    ),
+    fill_new = guide_legend(
+      title = "Phase",
+      order = 2
+    )
+  ) +
+
+  labs(x = "Sampling Date (2022)", y = "Site") +
+  theme_pubclean() +
+  theme(
+    legend.position = "right",
+    axis.title = element_text(face="bold"),
+    legend.title = element_text(face="bold") 
+  ) + 
+  coord_cartesian(xlim = c(start_date, end_date))
+  )
+```
+
+```{r}
+(precipplot <- ggplot(precip, aes(Date, Precip..mm., color = Site)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = c("Angelo" = "darkgreen", "Hopland" = "#a6d96a")) +
+  scale_x_date(limits = c(start_date, end_date),
+               date_labels = "%m/%d",
+               date_breaks = "1 month") +
+  labs(y = "Precipitation (mm)", x = "") +
+  theme_pubclean() +
+  theme(axis.title.y = element_text(face = "bold"),
+        legend.position = "right",
+        legend.title = element_text(face = "bold")) + 
+  coord_cartesian(xlim = c(start_date, end_date)))
+
+(gwcplot <- ggplot(meta2_summary, aes(date_collected, mean_GWC, color = Site, fill = Site)) +
+  geom_line(linetype = "dashed", size = 1) +
+  geom_point(aes(date_collected, GWC), pch = 21, color = "black", size = 4) +
+  scale_color_manual(values = c("darkgreen", "#a6d96a"), labels = c("Angelo", "Hopland")) +
+  scale_fill_manual(values = c("darkgreen", "#a6d96a"), labels = c("Angelo", "Hopland")) +
+  scale_x_date(limits = c(start_date, end_date),
+               date_labels = "%m/%d",
+               date_breaks = "1 month") +
+  labs(y = "Gravimetric Water Content (%)", x = "") +
+  theme_pubclean() +
+  theme(axis.title.y = element_text(face = "bold"),
+        legend.position = "right",
+        legend.title = element_text(face = "bold")) +
+  coord_cartesian(xlim = c(start_date, end_date)))
+
+(waterplot <- plot_grid(timeline_plot, precipplot, gwcplot, ncol = 1, align = "v", labels = c("C", "D", "E"), label_size = 18, rel_heights = c(1, 1, 1)))
+
+(waterplot2 <- plot_grid(timeline_plot, precipplot, gwcplot, ncol = 1, align = "v", label_size = 18, rel_heights = c(1, 1, 1)))
+
+ggsave("Figure1_WY_bottomhalf.png", waterplot2, height = 8, width = 14)
+```
+
+

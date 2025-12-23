@@ -1,0 +1,509 @@
+---
+title: "Figure 3 - Water Year - Time Richness Env"
+output: html_document
+date: "2025-03-19"
+---
+
+Load Libraries
+```{r}
+library(tidyverse)
+library(vegan)
+library(purrr)
+library(lubridate)
+library(ggpubr)
+library(emmeans)
+library(stats)
+```
+
+Import Rarefied Abundance Table
+```{r}
+df <- read.csv('../2412_normalizedabundancetable_rarefied_singremoved.csv')
+dfa <- df %>% select(X:AC4_2)  %>% column_to_rownames(var = 'X') %>% filter(rowSums(across(where(is.numeric)))!=0) %>% filter(rowSums(. > 0) > 1)
+dfh <- df %>% select(X, HA10_1:HC4_2)  %>% column_to_rownames(var = 'X') %>%  filter(rowSums(across(where(is.numeric)))!=0) %>% filter(rowSums(. > 0) > 1)
+
+meta <- read.csv('../2412_metadataALL.csv') %>% mutate(month_date = case_when(Timepoint == "10" ~ "11/14",
+                                                                              Timepoint == "1" ~ "3/19",
+                                                                              Timepoint == "2" ~"4/7",
+                                                                              Timepoint == "3" ~'4/29', 
+                                                                              Timepoint == "4" ~ '5/21', 
+                                                                              Timepoint == "6" ~'6/15'))
+metaa <- meta %>% filter(Site == 'Angelo')
+metah <- meta %>% filter(Site == 'Hopland')
+
+dfa <- dfa[, match(metaa$SampleID, colnames(dfa))]
+dfh <- dfh[, match(metah$SampleID, colnames(dfh))]
+```
+
+Prepare Data
+```{r}
+otua <- t(dfa %>% mutate_if(is.numeric, round))
+richness <- estimateR(otua)
+evenness <- diversity(otua) / log(specnumber(otua))
+shannon <- diversity(otua, index = "shannon")
+simpson <- diversity(otua, "simpson")
+ang_alphadiv <- as.data.frame(cbind(metaa, t(richness), 
+                         shannon, evenness, simpson))  %>% remove_rownames()
+otuh <- t(dfh %>% mutate_if(is.numeric, round))
+richness <- estimateR(otuh)
+evenness <- diversity(otuh) / log(specnumber(otuh))
+shannon <- diversity(otuh, index = "shannon")
+simpson <- diversity(otuh, "simpson")
+hop_alphadiv <- as.data.frame(cbind(metah, t(richness), 
+                         shannon, evenness, simpson)) %>% remove_rownames()
+
+alphadiv <- rbind(ang_alphadiv, hop_alphadiv) %>% mutate(month_day = paste0(month(date_collected), "/", day(date_collected)))
+```
+
+Statistics - richness
+```{r}
+# Linear model with fixed effects
+ang_lm <- lm(S.obs ~ as.factor(Timepoint) + Rep, data = ang_alphadiv)
+hop_lm <- lm(S.obs ~ as.factor(Timepoint) + Rep, data = hop_alphadiv)
+
+plot(ang_lm) #plots look ok
+plot(hop_lm)  #plots look ok
+
+summary(ang_lm)
+summary(hop_lm)
+
+# Run ANOVA to get p-values
+anova(ang_lm) #time and rep are significant
+anova(hop_lm) #only time is significant
+
+emmeans(ang_lm, pairwise ~ Rep, adjust = "tukey") #A-B and B-C significantly diff
+emmeans(ang_lm, pairwise ~ as.factor(Timepoint), adjust = "tukey") #1 and 10, 2 and 10, 4 and 10
+emmeans(hop_lm, pairwise ~ as.factor(Timepoint), adjust = "tukey") #1 and 4, 2 and 4, 3 and 4, 4 and 10
+```
+
+Alpha Diversity Plotting
+```{r}
+#manual curation from above statistical tests
+sig_annotations_time <- data.frame(
+  Site = c(rep("Angelo", 3), rep("Hopland", 4)),
+  xminbar = c("3/19", "4/7", "5/21", "3/19", "4/7", "4/29", "5/21"),
+  xmaxbar = c("11/14", "11/14", "11/14", "5/21", "5/21", "5/21", "11/14"),
+  #xposstar = c("3/19", "4/7", "5/21", "3/19", "4/7", "4/29", "5/21"),
+  xposstar = c(3.5, 4, 5, 2.5, 3, 3.5, 5),
+  y.position.bar = c(3100, 3000, 2900, 3100, 3000, 2900, 2800),
+  label = c("***", "**", "**", "*", "*", "***", "***")
+)
+
+(alphaplotsnew <- ggplot(alphadiv, aes(x=factor(month_date, level=c('3/19', '4/7', '4/29', '5/21', '6/15', '11/14')), y=S.obs)) +
+  geom_smooth(aes(group = 1), method = "loess", se = TRUE, size = 1, color = "gray50") +
+  geom_point(aes(fill=as.factor(Timepoint), shape = Rep), col = 'black', size = 3) + #shape = Rep
+  scale_fill_manual(
+    values = c("#a6d96a", "#1a9641", "#66bd63","burlywood1","burlywood", "#4575b4" ),
+    #values = c("darkseagreen3", "chartreuse4", "darkolivegreen3","burlywood", "burlywood1", "darkslategray4"), 
+    guide = "none")+
+  scale_shape_manual(name = "Sampling Zone",
+    labels = c('A', 'B', 'C'),
+    values = c(24, 22, 21)) +
+    labs(x= 'Sampling Date', y= 'Viral Richness') +
+    theme_transparent()+
+   facet_wrap(~Site)  +
+    geom_segment(data = sig_annotations_time,
+               aes(x = xminbar, xend = xmaxbar, y = y.position.bar, yend = y.position.bar),
+               inherit.aes = FALSE, linewidth = 0.6) +
+    geom_text(data = sig_annotations_time,
+            aes(x = xposstar, y = y.position.bar + 30, label = label),
+            inherit.aes = FALSE, size = 5) +
+    theme(
+    legend.text = element_text(size = 11),
+    legend.title = element_text(size = 12, face="bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 11, face="bold"),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 11, face="bold"),
+    strip.text.x = element_text(size = 11, face = "bold")
+    ))
+
+
+#checking against days as a numerical value - linear model results are reported in manuscript 
+(alphaplots2 <- ggplot(alphadiv, aes(x=days, y=S.obs)) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, size = 1, color = "gray50") +
+  geom_point(aes(days, shape = Rep), col = 'black', size = 3) + #shape = Rep
+    stat_regline_equation(aes(label = ..eq.label..), formula = y ~ x) +
+   stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "*`,`~")), label.y.npc = 0.92, size = 3) + 
+   facet_wrap(~Site, scales = "free"))
+
+```
+
+
+Load yield data 
+```{r}
+dffilt <- read.csv('../../2203_wateryear_yeilds.csv')
+dffilt$Site <- sapply(strsplit(dffilt$Sample, '_'), `[`, 1)
+dffilt$Rep <- sapply(strsplit(dffilt$Sample, '_'), `[`, 2)
+dffilt$Time <- sapply(strsplit(dffilt$Sample, '_'), `[`, 3)
+dffilt$SubRep <- sapply(strsplit(dffilt$Sample, '_'), `[`, 4)
+dffilt$Site <- ifelse(dffilt$Site == 'H', 'Hopland', ifelse(dffilt$Site == 'A', 'Angelo', dffilt$Site))
+dffilt$Total_DNA <- dffilt$DNA.Yeild * 98
+```
+
+
+Statistics for virome DNA yields
+```{r}
+dffilta <- dffilt %>% filter(Site == "Angelo")
+dffilth <- dffilt %>% filter(Site == "Hopland")
+
+# Linear model with fixed effects
+ang_y_lm <- lm(Total_DNA ~ as.factor(Time) + Rep, data = dffilta)
+hop_y_lm <- lm(Total_DNA ~ as.factor(Time) + Rep, data = dffilth)
+
+plot(ang_y_lm) #plots look good
+plot(hop_y_lm)  #plots look good
+
+anova(ang_y_lm) #time sig only, not rep
+anova(hop_y_lm) #time sig only, not rep
+
+emmeans(ang_y_lm, pairwise ~ as.factor(Time), adjust = "tukey") #1 and 3, 1 and 6, 2 and 6
+emmeans(hop_y_lm, pairwise ~ as.factor(Time), adjust = "tukey") #Just 1 and 3, 
+
+#get DNA from timepoints of interest
+dffilt <- df %>% filter(Time %in% c("1", "2", "3", "4", "6", "10"))
+```
+
+```{r}
+#get data for plotting minimum yield of DNA for sequencing
+zero_points <- subset(df, Total_DNA == 0)
+
+
+sig_annotations_time_yield <- data.frame(
+  Site = c(rep("Angelo", 3), rep("Hopland", 1)),
+  xminbar = c("3/19", "3/19", '4/7', "3/19"),
+  xmaxbar = c('4/29', "6/15", "6/15", "4/29"),
+  xposstar = c(2, 3, 3.5, 2),
+  y.position.bar = c(71, 67, 63, 68),
+  label = c("*", "**", "*", "*")
+)
+
+(nogaps <- ggplot(data=dffilt, aes(x=factor(Date3, level=c('3/19', '4/7', '4/29', '5/21', '6/15', '11/14')), y=Total_DNA)) + 
+    #x=factor(Time, level=c('1', '2', '3', '4', '5', '6','10'))
+    geom_smooth(aes(group = 1), method = "loess", se = TRUE, size = 1, color = "gray50") +
+   #geom_jitter(aes(fill = Time, shape = Rep), position = position_jitter(width = 0.2), size = 3) +
+    geom_point(aes(fill = Time, shape = Rep), size = 3, show.legend = "FALSE") +
+   scale_shape_manual(values=c(24, 22, 21)) +
+   facet_wrap(~Site) +
+   theme(text=element_text(size=14), panel.background = element_rect(fill = "white")) + ylab("Viromic DNA Yield (ng)") + xlab('Harvest Date') + 
+     theme_transparent()+
+   scale_fill_manual(
+     #values =  c("darkseagreen3","darkslategray4", "chartreuse4", "darkolivegreen3","burlywood", "burlywood1")
+     values = c("#a6d96a","#4575b4", "#1a9641", "#66bd63","burlywood1","burlywood" )) +
+    xlab('Sampling Date') +
+    labs(fill = "Harvest Date") +
+    geom_hline(yintercept = 5, linetype = "dashed", color = "firebrick4") +
+    geom_segment(data = sig_annotations_time_yield,
+               aes(x = xminbar, xend = xmaxbar, y = y.position.bar, yend = y.position.bar),
+               inherit.aes = FALSE, linewidth = 0.6) +
+    geom_text(data = sig_annotations_time_yield,
+            aes(x = xposstar, y = y.position.bar + 1, label = label),
+            inherit.aes = FALSE, size = 5) +
+    theme(
+     legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10, face="bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 11, face="bold"),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 11, face="bold"),
+    strip.text.x = element_text(size = 11, face = "bold")
+  ))
+```
+
+
+Compare richness/yeild temporal trends to env temporal trends
+
+Load in metadata + modify yield dfto have same sample IDs
+```{r}
+metadatacombined <- read_csv('../2501_Metadata_combinedreps.csv')
+metadatacombined <- metadatacombined %>% mutate(CtoN = `Total_C(%)`/`Total_N(%)`)
+metadataH <- metadatacombined %>% filter(Site == "H")
+metadataA <- metadatacombined %>% filter(Site == "A")
+
+dffilt <- df %>% filter(Time %in% c("1", "2", "3", "4", "6", "10"))
+dffilt2 <- dffilt %>% mutate(SampleName = paste(substr(Site, 1,1), Rep, Time, "_", SubRep, sep = ""))
+dffiltA <- dffilt2 %>%  filter(Site == "Angelo")
+dffiltH <- dffilt2 %>%  filter(Site == "Hopland")
+```
+
+```{r}
+# Load function to compute pseudo-R2 for a loess model - only want to compare richness/yield against datasets that have ok r2 (>0.5 is moderate to good). Also probably only want to compare richness / yield if they have an R2 themselves
+
+pseudo_r2 <- function(model, data, response_var) {
+  y_obs <- data[[response_var]]
+  y_fit <- predict(model)
+  ss_res <- sum((y_obs - y_fit)^2, na.rm = TRUE)
+  ss_tot <- sum((y_obs - mean(y_obs, na.rm = TRUE))^2, na.rm = TRUE)
+  r2 <- 1 - (ss_res / ss_tot)
+  return(r2)
+}
+```
+
+Angelo (richness, yield and environment comparison)
+```{r}
+# Fit loess models for each environmental variable, richness and yield
+# loess is good for non-linear trends on small datasets
+
+loess_A_richness <- loess(S.obs ~ as.numeric(Timepoint), data = ang_alphadiv, span = 0.75)
+loess_A_yield <- loess(Total_DNA ~ as.numeric(Time), data = dffiltA, span = 0.75)
+loess_A_gwc <- loess(`GWC %` ~ Time, data = metadataA, span = 0.75)
+loess_A_totC <- loess(`Total_C(%)` ~ Time, data = metadataA, span = 0.75)
+loess_A_totN <- loess(`Total_N(%)` ~ Time, data = metadataA, span = 0.75)
+loess_A_pH <- loess(pH ~ Time, data = metadataA, span = 0.75)
+loess_A_CtoN <- loess(CtoN ~ Time, data = metadataA, span = 0.75)
+
+# calculate psuedo r2
+r2_A_richness <- pseudo_r2(loess_A_richness, ang_alphadiv, "S.obs")
+r2_A_yield <- pseudo_r2(loess_A_yield, dffiltA, "Total_DNA")
+r2_A_gwc <- pseudo_r2(loess_A_gwc, metadataA, "GWC %")
+r2_A_totC <- pseudo_r2(loess_A_totC, metadataA, "Total_C(%)")
+r2_A_totN <- pseudo_r2(loess_A_totN, metadataA, "Total_N(%)")
+r2_A_pH <- pseudo_r2(loess_A_pH, metadataA, "pH")
+r2_A_CtoN <- pseudo_r2(loess_A_CtoN, metadataA, "CtoN")
+
+(r2_results_A <- data.frame(
+  Variable = c("Richness", "Yield", "GWC", "Total C", "Total N", "pH", "C:N"),
+  R2 = c(r2_A_richness, r2_A_yield, r2_A_gwc, r2_A_totC, r2_A_totN, r2_A_pH, r2_A_CtoN)))
+#only GWC and pH have good fit (aroudn or above 0.7) , richness and yield have weak correlations through time. Stopping most analysis here BUT will still compute predicted values for GWC and pH to compare to host trends through time later. 
+
+#predict fitted values for each loess model
+metadataA$GWC_fitted <- predict(loess_A_gwc)
+metadataA$pH_fitted <- predict(loess_A_pH)
+
+#summarise
+env_trend_a <- metadataA %>%
+  group_by(Time) %>%
+  summarise(GWC_fitted = mean(GWC_fitted, na.rm = TRUE),
+            pH_fitted = mean(pH_fitted, na.rm = TRUE))
+```
+
+
+Hopland (richness, yield and environment comparison)
+```{r}
+# Fit loess models for each environmental variable, richness and yield
+# loess is good for non-linear trends on small datasets
+
+loess_H_richness <- loess(S.obs ~ as.numeric(Timepoint), data = hop_alphadiv, span = 0.75)
+loess_H_yield <- loess(Total_DNA ~ as.numeric(Time), data = dffiltH, span = 0.75)
+loess_H_gwc <- loess(`GWC %` ~ Time, data = metadataH, span = 0.75)
+loess_H_totC <- loess(`Total_C(%)` ~ Time, data = metadataH, span = 0.75)
+loess_H_totN <- loess(`Total_N(%)` ~ Time, data = metadataH, span = 0.75)
+loess_H_pH <- loess(pH ~ Time, data = metadataH, span = 0.75)
+loess_H_CtoN <- loess(CtoN ~ Time, data = metadataH, span = 0.75)
+
+
+# Compute R2 for each loess model 
+r2_H_richness <- pseudo_r2(loess_H_richness, hop_alphadiv, "S.obs")
+r2_H_yield <- pseudo_r2(loess_H_yield, dffiltH, "Total_DNA")
+r2_H_gwc <- pseudo_r2(loess_H_gwc, metadataH, "GWC %")
+r2_H_totC <- pseudo_r2(loess_H_totC, metadataH, "Total_C(%)")
+r2_H_totN <- pseudo_r2(loess_H_totN, metadataH, "Total_N(%)")
+r2_H_pH <- pseudo_r2(loess_H_pH, metadataH, "pH")
+r2_H_CtoN <- pseudo_r2(loess_H_CtoN, metadataH, "CtoN")
+
+(r2_results_H <- data.frame(
+  Variable = c("Richness", "Yield", "GWC", "Total C", "Total N", "pH", "C:N"),
+  R2 = c(r2_H_richness, r2_H_yield, r2_H_gwc, r2_H_totC, r2_H_totN, r2_H_pH, r2_H_CtoN)
+))
+#only richness, gwc, and pH have a moderate or high r2 
+
+# Predict fitted values for each loess model
+hop_alphadiv$Richness_fitted <- predict(loess_H_richness)
+metadataH$GWC_fitted <- predict(loess_H_gwc)
+metadataH$pH_fitted <- predict(loess_H_pH)
+
+
+# Summarize trends for each variable
+richness_trend_h <- hop_alphadiv %>%
+  group_by(Timepoint) %>%
+  summarise(Richness_fitted = mean(Richness_fitted, na.rm = TRUE))
+
+
+env_trend_h <- metadataH %>%
+  group_by(Time) %>%
+  summarise(GWC_fitted = mean(GWC_fitted, na.rm = TRUE),
+            pH_fitted = mean(pH_fitted, na.rm = TRUE))
+
+# Merge trends by Timepoint
+trend_data_h <- richness_trend_h %>% inner_join(env_trend_h, by = c("Timepoint" = "Time"))
+
+# Compute Spearman correlations
+cor_results_h <- data.frame(
+  Variable = c("GWC", "pH"),
+  Spearman = c(
+    cor(trend_data_h$Richness_fitted, trend_data_h$GWC_fitted, method = "spearman"),
+    cor(trend_data_h$Richness_fitted, trend_data_h$pH_fitted, method = "spearman")
+  ),
+  Comparison = c("Richness", "Richness")
+)
+```
+
+Compare host abundance temporal trends to env temporal trends - only doing Hopland since those richness / yield trends were signif
+A) load in function
+```{r}
+# Function to compute LOESS fit and R²
+compute_loess_r2 <- function(df, time_col, value_col, span = 0.75) {
+  loess_fit <- loess(reformulate(time_col, value_col), data = df, span = span)
+  fitted_values <- predict(loess_fit)
+  
+  # Compute R²: 1 - (SS_residuals / SS_total)
+  actual_values <- df[[value_col]]
+  ss_residuals <- sum((actual_values - fitted_values)^2, na.rm = TRUE)
+  ss_total <- sum((actual_values - mean(actual_values, na.rm = TRUE))^2, na.rm = TRUE)
+  r2 <- 1 - (ss_residuals / ss_total)
+  
+  return(list(fitted = fitted_values, r2 = r2))
+}
+
+```
+
+B) Input data and rearrange
+```{r}
+meta <- read.csv("../2412_metadataALL.csv")
+
+all.m <- meta
+angelo.m <- meta[meta$Site == 'Angelo', ]
+hopland.m <- meta[meta$Site == 'Hopland', ]
+
+otutable <- read_csv('../2407_normalizedabundancetable_singremoved.csv')
+predictedhost <- read_csv("../2501_iphop_predictions_onehost.csv")
+
+otutablcomb <- otutable %>% left_join(predictedhost, by = c("...1" = "Virus")) 
+
+hop.host <- otutablcomb  %>%
+  group_by(phylum) %>%
+  summarise(across(HA10_1:HC4_2, sum, na.rm = TRUE)) %>% 
+  filter(phylum != "NA") %>% 
+  filter(rowSums(across(where(is.numeric)))!=0)
+
+#compute z-scores as it is easier to compare trends over time this way
+
+hop.host.long <- hop.host %>% 
+  column_to_rownames(var = "phylum") %>% 
+          t(.) %>% as.data.frame() %>% rownames_to_column(var = 'sample') %>% 
+          gather(key = "Phylum", value = "Value", -sample) %>% 
+          group_by(Phylum) %>% 
+          mutate(zValue = (Value - mean(Value))/sd(Value)) %>% 
+          select(sample, Phylum, zValue) %>% 
+  left_join(hopland.m, by = c("sample"= "SampleID"))
+```
+
+C) Filter by loess fit of > 0.5 and then compute correlations
+```{r}
+phylum_fits_hop <- hop.host.long %>%
+  group_by(Phylum) %>%
+  group_modify(~ {
+    fit_result <- compute_loess_r2(.x, "Timepoint", "zValue")
+    .x %>%
+      mutate(Fitted = fit_result$fitted, R2 = fit_result$r2)
+  }) %>%
+  ungroup()
+
+good_fits_hop <- phylum_fits_hop  %>%
+  group_by(Phylum) %>%
+  summarise(mean_R2 = mean(R2, na.rm = TRUE)) %>%
+  filter(mean_R2 > 0.5)  # Adjust threshold as needed
+
+filtered_phylum_hop <- phylum_fits_hop %>%
+  filter(Phylum %in% good_fits_hop$Phylum)
+
+hopmerged <- filtered_phylum_hop %>%
+  inner_join(trend_data_h, by = "Timepoint")
+
+# Compute Spearman correlations for each phylum against environmental variables
+cor_results_hop <- hopmerged %>%
+  group_by(Phylum) %>%
+  summarise(across(c(Richness_fitted, GWC_fitted,pH_fitted), 
+                   ~ cor(.x, zValue, method = "spearman", use = "complete.obs"), .names = "cor_{col}")) %>% 
+  pivot_longer(-Phylum, values_to = "R2", names_to = "Comparison") %>% filter(R2 > 0.5 | R2 < -0.5)
+
+cor_results_hop #Pseudomonadota pos correlated with GWC and pH (0.65, 0.577)
+```
+
+```{r}
+cor_results_hop_trend_long <- hopmerged %>% select(Phylum, Timepoint, Fitted, GWC_fitted, pH_fitted) %>% pivot_longer(-c(Phylum, Timepoint), values_to = "Fitted_Value", names_to = "Variable") %>% 
+  mutate(Variable2 = case_when(Variable == "Fitted" ~ "Rel. Mean Abund. of Hopland vOTUs predicted to infect Pseudomonadota (Z-Score)",
+                               Variable == "GWC_fitted" ~ "Hopland Gravimetric Water Content (%)",
+                               Variable == "pH_fitted" ~ "Hopland pH"))
+cor_results_hop_values_long <- hopmerged %>% select(Phylum, zValue, Timepoint, `GWC..`, pH, Rep) %>% pivot_longer(-c(Phylum, Timepoint, Rep), values_to = "Fitted_Value", names_to = "Variable") %>% mutate(Variable2 = case_when(Variable == "zValue" ~ "Rel. Mean Abund. of Hopland vOTUs predicted to infect Pseudomonadota (Z-Score)",
+                               Variable == "GWC.." ~ "Hopland Gravimetric Water Content (%)",
+                               Variable == "pH" ~ "Hopland pH"))
+
+annotations <- data.frame(
+  Variable2 = c("Hopland Gravimetric Water Content (%)", "Hopland pH", "Rel. Mean Abund. of Hopland vOTUs predicted to infect Pseudomonadota (Z-Score)", "Rel. Mean Abund. of Hopland vOTUs predicted to infect Pseudomonadota (Z-Score)"),  
+  x = c(1.5, 1.5, 1.5, 1.5),  
+  y = c(18.5, 5.27, 2.85, 2.4)  
+)
+
+annotations$label <- list(
+  bquote("GWC ~ Viral Richness, " ~ R^2 ~ "= -0.7"), 
+  bquote("pH ~ Viral Richness, " ~ R^2 ~ "= -0.6"), 
+  bquote("Predicted Host ~ GWC, " ~ R^2 ~ "= 0.65"), 
+  bquote("Predicted Host ~ pH, " ~ R^2 ~ "= 0.57")
+)
+
+cor_results_hop_trend_long$Variable2 <- factor(cor_results_hop_trend_long$Variable2, 
+  levels = c("Hopland Gravimetric Water Content (%)", 
+             "Hopland pH", 
+             "Rel. Mean Abund. of Hopland vOTUs predicted to infect Pseudomonadota (Z-Score)"))
+
+cor_results_hop_values_long$Variable2 <- factor(cor_results_hop_values_long$Variable2, 
+  levels = c("Hopland Gravimetric Water Content (%)", 
+             "Hopland pH", 
+             "Rel. Mean Abund. of Hopland vOTUs predicted to infect Pseudomonadota (Z-Score)"))
+
+annotations$Variable2 <- factor(annotations$Variable2,
+  levels = c("Hopland Gravimetric Water Content (%)", 
+             "Hopland pH", 
+             "Rel. Mean Abund. of Hopland vOTUs predicted to infect Pseudomonadota (Z-Score)"))
+
+  
+(fittedtrendsplothop <- ggplot(cor_results_hop_trend_long, aes(x = as.factor(Timepoint), y = Fitted_Value, color = Variable2, group = 1)) +
+    geom_smooth(data = cor_results_hop_values_long, aes(group = Variable2), formula = y~x, method = "loess", color = NA, se = TRUE, alpha = 0.2) + 
+      geom_point(data = cor_results_hop_values_long, aes(x = as.factor(Timepoint), y = Fitted_Value, shape = Rep), fill = "black", alpha = 0.3, size = 3, show.legend = FALSE) +
+  geom_line(size = 1.5, show.legend = FALSE) +
+    
+    scale_shape_manual(values=c(24, 22, 21)) + 
+  scale_color_manual(values = c("lightblue3",  "lightcyan4", "azure3")) +
+  labs(title = "Hopland", x = "Sampling Date") +
+  facet_wrap(~Variable2, ncol = 1, scales = "free_y",
+             strip.position = "left", 
+                labeller = as_labeller(c("Hopland Gravimetric Water Content (%)" = "GWC (%)", "Hopland pH" = "pH", "Rel. Mean Abund. of Hopland vOTUs predicted to infect Pseudomonadota (Z-Score)" = "Predicted Pseudomonadota Phage \nMean Rel. Abund. (Z-score)"))) +
+    ylab(NULL) +
+    scale_x_discrete(labels = c(
+  "1" = "3/19",
+  "2" = "4/7",
+  "3" = "4/29",
+  "4" = "5/21",
+  "10" = "11/14"
+)) +
+  geom_text(data = annotations, aes(x = x, y = y, label = label), 
+                inherit.aes = FALSE, size = 3.5, parse = TRUE, fontface = "bold") +
+  theme_bw() + theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 10, face="bold"),
+    strip.text.y = element_text(size = 10, face = "bold"),
+    title = element_text(size = 10.5, face = "bold"),
+    strip.placement = "outside"
+  ))
+
+
+```
+
+```{r}
+legend <- get_legend(alphaplotsnew)
+alphaplots1 <- alphaplotsnew + theme(legend.position = "none")
+
+(fig3left <- plot_grid(alphaplots1, nogaps, nrow = 2, labels = c("A","B"), label_size = 15))
+(fig3 <- plot_grid(fig3left, NULL, fittedtrendsplothop, ncol = 3, rel_widths = c(1.2, 0.04, 1), labels = c("", "C", ""), label_size = 15))
+(fig3leg <- plot_grid(fig3, legend, NULL, ncol = 1, rel_heights = c(5, .15, .1)) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+ggsave("Figure4_WY_time_environment.png", fig3leg, height = 8.5, width = 13.5)
+```
+
+

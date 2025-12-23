@@ -1,0 +1,772 @@
+---
+title: "Figure 1 - Water Year"
+output: html_document
+date: "2025-03-17"
+---
+
+```{r}
+library(tidyverse)
+library(vegan)
+library(cowplot)
+library(ape)
+library(ggpubr)
+library(pairwiseAdonis)
+library(emmeans)
+library(rstatix)
+library(lubridate)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(magick)
+```
+
+```{r}
+#load in files
+otu <- read.csv("../2407_normalizedabundancetable_singremoved.csv", row.names = 1)
+angelo.otu <- otu %>% select(AA10_1:AC4_2) %>% filter(rowSums(across(where(is.numeric)))!=0) 
+hopland.otu <- otu %>% select(HA10_1:HC4_2) %>% filter(rowSums(across(where(is.numeric)))!=0) 
+
+#metadata table
+meta <- read.csv("../2412_metadataALL.csv")
+angelo.m <- meta[meta$Site == 'Angelo', ]
+hopland.m <- meta[meta$Site == 'Hopland', ]
+```
+
+####################
+Experimental Design
+####################
+
+```{r}
+# Function to convert m/d to Date format (arbitrary year for plotting)
+convert_date <- function(md) as.Date(paste0("2022-", md), format = "%Y-%m/%d")
+
+sampling <- tribble(
+  ~site, ~sample_type, ~date, ~category,
+  "Angelo", "Virome", "3/19", "Plant Productivity",
+  "Angelo", "Virome", "4/7", "Plant Productivity",
+  "Angelo", "Virome", "4/29", "Plant Productivity",
+  "Angelo", "Virome", "5/21", "Dry Down",
+  "Angelo", "Virome", "6/15", "Dry Down",
+  "Angelo", "Virome", "11/14", "Wet Up",
+  "Angelo", "Metagenome", "4/29", "Plant Productivity",
+  "Angelo", "Metagenome", "5/21", "Dry Down",
+  "Angelo", "Metagenome", "6/1", "Dry Down",
+  "Angelo", "Metagenome", "9/15", "Wet Up", 
+  "Angelo", "Metagenome", "9/21","Wet Up",
+  "Hopland", "Virome", "3/19", "Plant Productivity",
+  "Hopland", "Virome", "4/7", "Plant Productivity",
+  "Hopland", "Virome", "4/29", "Plant Productivity",
+  "Hopland", "Virome", "5/21", "Dry Down",
+  "Hopland", "Virome", "11/14","Wet Up",
+  "Hopland", "Metagenome", "4/29", "Plant Productivity",
+  "Hopland", "Metagenome", "5/21", "Dry Down",
+  "Hopland", "Metagenome", "6/1", "Dry Down",
+  "Hopland", "Metagenome", "7/13", "Dry Down",
+  "Hopland", "Metagenome", "9/21", "Wet Up"
+) %>%
+  mutate(date = convert_date(date))
+
+phase_ranges <- sampling %>%
+  group_by(category) %>%
+  summarise(
+    start_date = min(date),
+    end_date   = max(date)
+  )
+
+
+
+(timeline_plot <- ggplot(sampling, aes(x = date, y = factor(site, levels = c("Hopland", "Angelo")), fill = sample_type, shape = sample_type)) +
+  geom_point(size = 6, color = "black", alpha = 0.9, position = position_dodge(width = 0.4)) +
+  scale_shape_manual(values = c("Virome" = 21, "Metagenome" = 21), breaks = c("Virome", "Metagenome")) +
+  #scale_fill_manual(values = c("Virome" = "lightseagreen", "Metagenome" = "azure2"), breaks = c("Virome", "Metagenome"))+
+  labs(x = "Sampling Date (2022)", y = "Site", fill = "Sample Type", shape = "Sample Type") +
+    scale_x_date(
+    breaks = sampling$date,        # use the actual sample dates for tick marks
+    date_labels = "%m/%d"         # format the labels as month/day
+  ) +
+  geom_rect(
+    data = phase_ranges,
+    aes(xmin = (start_date - 10), xmax = (end_date + 10), ymin = -Inf, ymax = Inf, fill = category),
+    inherit.aes = FALSE,
+    alpha = 0.1
+  ) +
+    scale_fill_manual(
+    values = c("Virome" = "lightseagreen", "Metagenome" = "azure2",
+               "Plant Productivity" = "seagreen", "Dry Down" = "burlywood", "Wet Up" = "skyblue")
+  ) +
+  theme_pubclean() +
+    theme(legend.position = "right",
+          axis.title = element_text(size = 10, face="bold"),
+          legend.title = element_text(size = 10, face="bold"))) 
+
+
+(timeline_plot <- ggplot(sampling, aes(x = date, y = factor(site, levels = c("Hopland", "Angelo")))) +
+  # Points
+  geom_point(aes(fill = sample_type, shape = sample_type),
+             size = 6, color = "black", alpha = 0.9,
+             position = position_dodge(width = 0.4)) +
+  scale_shape_manual(values = c("Virome" = 21, "Metagenome" = 21)) +
+  scale_fill_manual(
+    name = "Sample Type",  # legend title for points
+    values = c("Virome" = "lightseagreen", "Metagenome" = "azure2")
+  ) +
+  # Rectangles
+  geom_rect(data = phase_ranges,
+            aes(xmin = start_date - 10, xmax = end_date + 10,
+                ymin = -Inf, ymax = Inf, fill = category),
+            inherit.aes = FALSE, alpha = 0.1) +
+  scale_fill_manual(
+    name = "Phase",         # legend title for rectangles
+    values = c("Plant Productivity" = "seagreen",
+               "Dry Down" = "burlywood",
+               "Wet Up" = "skyblue"),
+    guide = guide_legend(order = 2)
+  ) +
+  # X-axis
+  scale_x_date(
+    breaks = sampling$date,
+    date_labels = "%m/%d"
+  ) +
+  labs(x = "Sampling Date (2022)", y = "Site") +
+  theme_pubclean() +
+  theme(legend.position = "right",
+        axis.title = element_text(size = 10, face="bold"),
+        legend.title = element_text(size = 10, face="bold")))
+
+```
+
+```{r}
+# Get California map
+usa <- ne_states(country = "United States of America", returnclass = "sf")
+california <- subset(usa, name == "California")
+
+sites <- data.frame(
+  site = c("Angelo", "Hopland"),
+  lat = c(39.73925, 39.00178),
+  lon = c(-123.6300, -123.0682)
+)
+
+# Convert to sf
+sites_sf <- st_as_sf(sites, coords = c("lon", "lat"), crs = 4326)
+
+norcal_bbox <- st_as_sfc(st_bbox(c(xmin = -124.5, xmax = -121.5, ymin = 37.5, ymax = 40.5), crs = st_crs(4326)))
+california_north <- st_crop(california, norcal_bbox)
+
+# Add to map
+(main_map <- ggplot() +
+  geom_sf(data = california_north, fill = "gray85", color = "black") +
+  geom_sf(data = sites_sf, aes(fill = site), shape = 21, size = 5, color = "black", stroke = 1) +
+  geom_sf_text(data = sites_sf, aes(label = site), fontface = "bold", nudge_y = 0.25, size = 3) +
+  scale_fill_manual(values = c("Angelo" = "darkgreen", "Hopland" = "burlywood4")) +
+  theme_void() +
+  theme(legend.position = "none"))
+
+(minicali <- ggplot() +
+  geom_sf(data = california, fill = "gray85", color = "black")  +
+  theme_void() +
+  theme(legend.position = "none"))
+
+ggsave("Main_Map.svg", main_map, dev = "svg")
+ggsave("Cali_Map.svg", minicali, dev = "svg")
+```
+
+
+```{r}
+triangle_coords <- function(a_c, a_b, b_c) {
+  A <- c(0, 0)
+  C <- c(a_c, 0)
+  cos_theta <- (a_b^2 + a_c^2 - b_c^2) / (2 * a_b * a_c)
+  theta <- acos(cos_theta)
+
+  # B coordinates (from A at angle theta)
+  B <- c(a_b * cos(theta), a_b * sin(theta))
+
+  coords <- tibble(
+    label = c("A", "B", "C"),
+    x = c(A[1], B[1], C[1]),
+    y = c(A[2], B[2], C[2])
+  )
+
+  segments <- tribble(
+    ~x, ~y, ~xend, ~yend,
+    coords$x[1], coords$y[1], coords$x[2], coords$y[2],
+    coords$x[2], coords$y[2], coords$x[3], coords$y[3],
+    coords$x[3], coords$y[3], coords$x[1], coords$y[1]
+  )
+
+  list(coords = coords, segments = segments)
+}
+
+# Angelo triangle (convert cm to meters where needed)
+angelo <- triangle_coords(
+  a_c = 16.90,  # A–C
+  a_b = 10.35,  # A–B
+  b_c = 16.03   # B–C
+)
+
+# Hopland triangle
+hopland <- triangle_coords(
+  a_c = 23.20,
+  a_b = 12.87,
+  b_c = 10.38
+)
+
+# Add site column
+angelo_coords <- angelo$coords %>% mutate(site = "Angelo") %>% mutate(Rep2 = c("Rep A", "Rep B", "Rep C"))
+hopland_coords <- hopland$coords %>% mutate(site = "Hopland") %>% mutate(Rep2 = c("Rep A", "Rep B", "Rep C"))
+triangle_coords_all <- bind_rows(angelo_coords, hopland_coords)
+
+angelo_segs <- angelo$segments %>% mutate(site = "Angelo")
+hopland_segs <- hopland$segments %>% mutate(site = "Hopland")
+triangle_segments_all <- bind_rows(angelo_segs, hopland_segs)
+
+angelo_labels <- angelo_segs %>% mutate(
+    label = paste0(round(sqrt((x - xend)^2 + (y - yend)^2), 2), " m"),
+    label_x = (x + xend) / 2,
+    label_y = (y + yend) / 2
+  )
+
+hopland_labels <- hopland_segs %>% mutate(
+    label = paste0(round(sqrt((x - xend)^2 + (y - yend)^2), 2), " m"),
+    label_x = (x + xend) / 2,
+    label_y = (y + yend) / 2
+  )
+
+# Add side labels
+label_segments <- triangle_segments_all %>%
+  mutate(
+    label = paste0(round(sqrt((x - xend)^2 + (y - yend)^2), 2), " m"),
+    label_x = (x + xend) / 2,
+    label_y = (y + yend) / 2
+  )
+
+(triangle_plot_a <- ggplot() +
+  geom_segment(data = angelo_segs, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_text(data = angelo_coords,
+            aes(x = x, y = y, label = Rep2),
+            size = 4, fontface = "bold",
+            nudge_y = c(0, 0.5, 0), nudge_x = c(-1, 0, 1)) +
+  geom_text(data = angelo_labels,
+            aes(x = label_x, y = label_y, label = label),
+            color = "black", size = 3,
+            nudge_y = c(0, 0, 0.5), nudge_x = c(-1.5, 1.5, 0)) +
+  #facet_wrap(~site, scales = "fixed") +
+  #coord_fixed() +
+  theme_void(base_size = 14))
+
+(triangle_plot_h <- ggplot() +
+  geom_segment(data = hopland_segs, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_text(data = hopland_coords,
+            aes(x = x, y = y, label = Rep2),
+            size = 4, fontface = "bold",
+            nudge_y = c(0.01, 0.03, 0.01), nudge_x = c(-1, 0, 1)) +
+  geom_text(data = hopland_labels,
+            aes(x = label_x, y = label_y, label = label),
+            color = "black", size = 3,
+            nudge_y = c(0, 0, 0.05), nudge_x = c(-1.5, 1.5, 0)) +
+  #facet_wrap(~site, scales = "fixed") +
+  #coord_fixed() +
+  theme_void(base_size = 10))
+
+
+(fig1Aright <- plot_grid(triangle_plot_a,  triangle_plot_h, ncol = 1))
+
+#ggsave("Trianglepic.svg", fig1Aright, dev = "svg", dpi = 600, height = 5, width = 5)
+```
+
+
+
+
+####################
+vOTU Beta Diversity
+####################
+```{r}
+otu <- angelo.otu
+otu <- t(otu)
+otu.xform <- decostand(otu, method="hellinger")
+otu.dist.ang <- as.matrix(vegdist(otu.xform, method='bray')) 
+pcoa <- pcoa(as.dist(otu.dist.ang))
+axes <- as.data.frame(pcoa$vectors)
+eigval <- round(pcoa$values$Relative_eig * 100, digits = 2)
+eigval <- data.frame( PC = 1:length(eigval), Eigval = eigval)
+
+#define the axes for the plot - adjust if plotting dimensions other than 1 and 2
+pco1.a <- paste("PCo1 (", eigval[[1,2]], " %)", sep = "")
+pco2.a <- paste("PCo2 (", eigval[[2,2]], " %)", sep = "")
+
+meta <- angelo.m
+axes2 <- cbind(axes,meta) %>% mutate(month_date = case_when(Timepoint == "10" ~ "11/14",
+                                                                              Timepoint == "1" ~ "3/19",
+                                                                              Timepoint == "2" ~"4/7",
+                                                                              Timepoint == "3" ~'4/29', 
+                                                                              Timepoint == "4" ~ '5/21', 
+                                                                              Timepoint == "6" ~'6/15'))
+```
+
+```{r}
+#stats for Angelo
+#check stats assumptions (dispersion)
+(disp.ang.rep <- betadisper(as.dist(otu.dist.ang), angelo.m$Rep))
+permutest(disp.ang.rep, permutations=1000, pairwise = T) # no sig differences in dispersion across rep for ang
+
+(disp.ang.time <- betadisper(as.dist(otu.dist.ang), angelo.m$days))
+permutest(disp.ang.time, permutations=1000, pairwise = T) # very significant differences in disp across timepoint - need to proceed with caution...
+
+(pmanova2 = adonis2(as.dist(otu.dist.ang) ~ Rep + days, by = "terms", data = angelo.m)) #both are significant - Rep explains 30% of variation, with days only explaining 9%
+pairwise.adonis(otu.dist.ang, angelo.m[,"Rep"]) #all reps significantly different from each other
+pairwise.adonis(otu.dist.ang, angelo.m[,"days"]) #no significantly different days likely due to all the mulitple comparisons
+```
+
+```{r}
+(pcoa_a_12_time <- ggplot(data=axes2, aes(x=Axis.1, y=Axis.2)) +
+  geom_point(aes(fill = factor(month_date, level=c('3/19', '4/7', '4/29', '5/21', '6/15', '11/14')), shape=Rep), size = 6, color = "black", alpha = 0.9) +
+  labs(title = "Angelo", x= pco1.a, y=pco2.a) +
+  theme_linedraw(base_size = 16) +
+  scale_fill_manual(
+    #values = c('#3e049c', '#8606a6', '#a62098', '#d5546e', '#f68d45', '#fdae32', '#fcd225'),
+    #values = c("darkseagreen", "chartreuse4", "darkolivegreen3","burlywood", "burlywood1", "darkslategray4"),
+    values = c("#a6d96a", "#1a9641", "#66bd63","burlywood1","burlywood", "#4575b4"),
+    #values = c("darkolivegreen1","darkolivegreen3", "darkolivegreen", "burlywood4", "navajowhite", "steelblue"),
+    name = "Sampling Date"
+  ) +
+  scale_shape_manual(
+    name = "Sampling Zone",
+    labels = c('A', 'B', 'C'),
+    values = c(24, 22, 21),
+    guide = guide_legend(override.aes = list(fill = "black", color = "black"))
+  ) +
+  guides(
+  fill = guide_legend(
+    override.aes = list(shape = 21, color = "black"),
+    nrow = 1,
+    byrow = TRUE
+  ),
+  shape = guide_legend(
+    override.aes = list(fill = "black", color = "black")
+  )
+) +
+  theme(
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = 'bold'),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 13, face="bold", hjust = 0.5),
+    axis.title.x = element_text(size = 11, face = 'bold'),
+    axis.title.y = element_text(size = 11, face = 'bold'),
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_line(color = "gray80"),
+    legend.title.align=0.5,
+    legend.position = 'bottom'
+  ) +
+   annotate("text", x=-0.24, y=0.3, label= "PERMANOVA", size = 3.5, fontface =2) + 
+  annotate("text", x = -0.24, y=0.275, label = "Zone: p < 0.001 (***)", size = 3.5) +
+   annotate("text", x = -0.24, y=0.25, label = "Time: p < 0.001 (***)", size = 3.5))
+
+
+```
+
+
+```{r}
+otu <- hopland.otu
+otu <- t(otu)
+otu.xform <- decostand(otu, method="hellinger")
+otu.dist.hop <- as.matrix(vegdist(otu.xform, method='bray')) 
+pcoa <- pcoa(as.dist(otu.dist.hop))
+axes <- as.data.frame(pcoa$vectors)
+eigval <- round(pcoa$values$Relative_eig * 100, digits = 2)
+eigval <- data.frame( PC = 1:length(eigval), Eigval = eigval)
+pco1.h <- paste("PCo1 (", eigval[[1,2]], " %)", sep = "")
+pco2.h <- paste("PCo2 (", eigval[[2,2]], " %)", sep = "")
+
+meta <- hopland.m
+axes2h <- cbind(axes,meta)
+```
+
+```{r}
+#stats for Hopland
+(disp.hop.rep <- betadisper(as.dist(otu.dist.hop), hopland.m$Rep))
+permutest(disp.hop.rep, permutations=1000, pairwise = T) # no sig differences in dispersion across rep for hop
+
+(disp.hop.time <- betadisper(as.dist(otu.dist.hop), hopland.m$days))
+permutest(disp.hop.time, permutations=1000, pairwise = T) # no sig differences in dispersion across days for hop
+
+(pmanova2 = adonis2(as.dist(otu.dist.hop) ~ Rep + days, by = "terms", data = hopland.m)) #rep and days significant, Rep explains 25% of variation, days explains 12% 
+
+pairwise.adonis(otu.dist.hop, hopland.m[,"Rep"]) #all reps significantly different from each other 
+pairwise.adonis(otu.dist.hop, hopland.m[,"days"]) #Days 244 vs 1, 244 vs 22, 244 vs 43, 244 vs 57, 1 vs 57 are significanlty different
+```
+
+```{r}
+(pcoa_h_12_time <- ggplot(data=axes2h, aes(x=Axis.1, y=Axis.2)) +
+  geom_point(aes(fill = as.factor(Timepoint), shape=Rep), size = 6, color = "black", alpha = 0.9, show.legend = FALSE) +
+  labs(title = "Hopland", x= pco1.h, y=pco2.h) +
+  theme_linedraw(base_size = 16) +
+  scale_fill_manual(
+    values = c("#a6d96a", "#1a9641", "#66bd63","burlywood1", "#4575b4"),
+    name = "Sampling Date"
+  ) +
+  scale_shape_manual(
+    name = "Replicate",
+    labels = c('Rep A', 'Rep B', 'Rep C'),
+    values = c(24, 22, 21),
+    guide = guide_legend(override.aes = list(fill = "black", color = "black"))
+  ) +
+  guides(fill = guide_legend(override.aes = list(shape = 21, color = "black"))) +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 13, face="bold", hjust = 0.5),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 11, face="bold"),
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_line(color = "gray80"),
+    legend.title.align=0.5
+  ) +
+  annotate("text", x=-0.19, y=0.39, label= "PERMANOVA", size = 3.5, fontface =2) + 
+  annotate("text", x = -0.19, y=0.365, label = "Zone: p < 0.001 (***)", size = 3.5) +
+   annotate("text", x = -0.19, y=0.34, label = "Time: p < 0.001 (***)", size = 3.5))
+```
+
+```{r}
+legend.pcoa <- get_legend(pcoa_a_12_time) 
+pcoa_a_12_time2 <- pcoa_a_12_time + theme(legend.position = "none")
+
+(a <- plot_grid(pcoa_a_12_time2, pcoa_h_12_time, ncol=2))
+(c <- plot_grid(NULL, legend.pcoa, NULL, ncol = 3, rel_widths = c(-.9,1,-.9) ))
+
+(d  <-  plot_grid(a,c, ncol=2, rel_widths = c(5,.6))+ theme(plot.background = element_rect(fill = "white", color = 'white')))
+```
+
+###############################
+Spatial Environment Comparison
+###############################
+
+```{r}
+env.meta <- read_csv('../2412_metadataALL.csv')
+env.meta.ang <- env.meta %>% filter(Site == 'Angelo')
+env.meta.hop <- env.meta %>% filter(Site == 'Hopland')
+
+#stats
+#angelo
+shapiro.test(env.meta.ang$`Total_C(%)`) #not signifcant = normal
+shapiro.test(env.meta.ang$`Total_N(%)`) #significant = non-normal
+shapiro.test(env.meta.ang$pH) #not significant = normal
+shapiro.test(env.meta.ang$CtoN) #barely significant = non-normal
+ggdensity(env.meta.ang$CtoN, fill = "lightgray")
+shapiro.test(env.meta.ang$`GWC %`) #significant = non-normal
+
+#normal
+angelo.lm.mod <- lm(`Total_C(%)` ~ Rep, env.meta.ang )
+angelo.aov <- aov(angelo.lm.mod)
+summary(angelo.aov ) 
+pairs(emmeans(angelo.aov, ~Rep)) #A and B / B and C are sig diff
+
+angelo.lm.mod <- lm(pH ~ Rep, env.meta.ang )
+angelo.aov <- aov(angelo.lm.mod)
+summary(angelo.aov ) 
+pairs(emmeans(angelo.aov, ~Rep)) #no significance 
+
+#non-normal
+an.mod <- glm(`Total_N(%)` ~ Rep, env.meta.ang, family = Gamma(link = "log"))
+summary(an.mod )
+#checking overdispersion:
+an.mod$deviance/an.mod$df.residual  #very low 0.0041 - can proceed
+anova(an.mod, test = "Chisq") 
+pairs(emmeans(an.mod, ~Rep)) #A-B and A-C sig diff
+
+an.mod <- glm(`GWC %` ~ Rep, env.meta.ang, family = Gamma(link = "log"))
+summary(an.mod ) #no significance
+
+an.mod.2 <- glm(CtoN ~ Rep, env.meta.ang, family = Gamma(link = "log"))
+summary(an.mod.2)
+#checking overdispersion:
+an.mod.2$deviance/an.mod.2$df.residual  #very low 0.0014 - can proceed
+anova(an.mod.2, test = "Chisq") 
+pairs(emmeans(an.mod.2, ~Rep)) #A-B and B-C sig diff!!
+
+#Carbon, Nitrogen and CtoN are significantly different between reps, plotting CtoN for figures
+
+
+#Hopland
+shapiro.test(env.meta.hop$`Total_C(%)`) #not signifcant = normal
+shapiro.test(env.meta.hop$`Total_N(%)`) #not signifcant = normal
+shapiro.test(env.meta.hop$pH) #significant = non-normal
+shapiro.test(env.meta.hop$CtoN) #not signifcant = normal
+shapiro.test(env.meta.hop$`GWC %`) #significant = non-normal
+
+#normal distributions first
+summary(aov(lm(`Total_C(%)` ~ Rep, env.meta.hop ))) #not significant
+summary(aov(lm(`Total_N(%)` ~ Rep, env.meta.hop ))) #not significant
+summary(aov(lm(`CtoN` ~ Rep, env.meta.hop ))) #not significant
+
+#non-normal (GWC and pH)
+hop.mod.ph <- glm(`pH` ~ Rep, env.meta.hop, family = Gamma(link = "log"))
+summary(hop.mod.ph) #no significance
+
+hop.mod.gwc <- glm(`GWC %` ~ Rep, env.meta.hop, family = Gamma(link = "log"))
+summary(hop.mod.gwc) #no significance
+
+#nothing is significanty different in Hopland
+
+
+(ctonplot <- ggplot(env.meta) +
+  geom_boxplot(aes(x = Rep, y = CtoN, fill = Rep), show.legend = FALSE) +
+  scale_fill_manual(values = c('#4A5043', 'azure3', "darkslateblue",'#B1B5C8','rosybrown4')) +
+  facet_wrap(~Site, scales = 'free') +
+  theme_pubclean() + labs(y = "C:N", x = 'Sampling Zone') + 
+  geom_line(data=tibble(Site = "Angelo", x=c(1,2), y = c(15,15)), aes (x=x, y=y), inherit.aes = FALSE) +
+  geom_text(data=tibble(Site = "Angelo", x=1.5, y = c(15.1, 15.1)), aes (x=x, y=y,  label = '***', size = 4.5), inherit.aes = FALSE, show.legend = FALSE) +
+     geom_line(data=tibble(Site = "Angelo", x=c(2,3), y = c(15.3, 15.3)), aes (x=x, y=y), inherit.aes = FALSE) +
+     geom_text(data=tibble(Site = "Angelo", x=2.5, y = c(15.4, 15.4)), aes (x=x, y=y,  label = '***', size = 4.5), inherit.aes = FALSE, show.legend = FALSE) +
+    theme(axis.title = element_text(face = 'bold', size = 12.5),
+          axis.text = element_text(size = 11),
+          strip.text.x = element_text(size = 12, face = "bold")))
+```
+
+##################################
+Spatial Predicted Host Comparison
+##################################
+
+```{r}
+#metadata table
+meta <- read.csv("../2412_metadataALL.csv")
+
+all.m <- meta
+angelo.m <- meta[meta$Site == 'Angelo', ]
+hopland.m <- meta[meta$Site == 'Hopland', ]
+
+otutable <- read_csv('../2407_normalizedabundancetable_singremoved.csv')
+predictedhost <- read_csv("../2501_iphop_predictions_onehost.csv")
+
+otutablcomb <- otutable %>% left_join(predictedhost, by = c("...1" = "Virus")) 
+
+ang.host <- otutablcomb  %>%
+  group_by(phylum) %>%
+  summarise(across(AA10_1:AC4_2, sum, na.rm = TRUE)) %>% 
+  filter(phylum != "NA")
+
+hop.host <- otutablcomb  %>%
+  group_by(phylum) %>%
+  summarise(across(HA10_1:HC4_2, sum, na.rm = TRUE)) %>% 
+  filter(phylum != "NA") %>% 
+  filter(rowSums(across(where(is.numeric)))!=0)
+
+ang.host.long <- ang.host %>% 
+  pivot_longer(-phylum, values_to = "abundance", names_to = "SampleID") %>% 
+  left_join(angelo.m, by = "SampleID")
+
+hop.host.long <- hop.host %>% 
+  pivot_longer(-phylum, values_to = "abundance", names_to = "SampleID") %>% 
+  left_join(hopland.m, by = "SampleID")
+```
+
+```{r}
+# Function to test normality and apply appropriate significance tests
+test_significance <- function(data) {
+  results <- data %>%
+    group_by(phylum) %>%
+    summarise(
+      shapiro_p = shapiro.test(abundance)$p.value,  # Normality test
+      normal = ifelse(shapiro_p > 0.05, "Yes", "No"),  # If p > 0.05, data is normal
+      test_type = ifelse(normal == "Yes", "ANOVA", "Kruskal-Wallis"),
+      p_value = ifelse(normal == "Yes", 
+                       anova_test(data, abundance ~ Rep)$p,  # ANOVA if normal
+                       kruskal.test(abundance ~ Rep)$p.value)  # Kruskal-Wallis if not
+    ) %>%
+    ungroup() %>%
+    filter(p_value < 0.05)  # Keep only significant phyla
+  
+  return(results)
+}
+
+# Function to do pairwise post-hoc tests
+pairwise_tests <- function(data, phylum, test_type) {
+  subset_data <- data %>% filter(phylum == !!phylum)
+  
+  if (test_type == "ANOVA") {
+    # Tukey's HSD for parametric
+    result <- subset_data %>% tukey_hsd(abundance ~ Rep)
+  } else {
+    # Dunn's test for non-parametric
+    result <- subset_data %>% dunn_test(abundance ~ Rep, p.adjust.method = "bonferroni")
+  }
+  
+  result$phylum <- phylum  # Add phylum info
+  return(result)
+}
+
+#apply function and get pairwise comparisons
+ang_results <- test_significance(ang.host.long)
+hop_results <- test_significance(hop.host.long)
+ang_pairwise <- map2_df(ang_results$phylum, ang_results$test_type, ~pairwise_tests(ang.host.long, .x, .y))
+hop_pairwise <- map2_df(hop_results$phylum, hop_results$test_type, ~pairwise_tests(hop.host.long, .x, .y))
+
+#get most abundant predicted hosts in dataset
+ang.host.long %>% group_by(phylum) %>% summarise(TotalAbundance = sum(abundance)) %>% arrange(desc(TotalAbundance))
+hop.host.long %>% group_by(phylum) %>% summarise(TotalAbundance = sum(abundance)) %>% arrange(desc(TotalAbundance))
+```
+
+```{r}
+#There are 9 significantly different phylums across reps- I am taking the three most abundant of those 9 that are also in the top 5
+
+#Bacteroidota, A-C **, B-C ***
+#Myxococcota, A-C **
+#Pseudomonadota A-B **
+
+(bact <- ang.host.long %>% filter(phylum == "Bacteroidota") %>% 
+  ggplot() +
+  geom_boxplot(aes(x = Rep, y = abundance, fill = Rep), show.legend = FALSE) +
+  scale_fill_manual(values = c('#4A5043', 'azure3', "darkslateblue",'#B1B5C8','rosybrown4')) +
+  theme_light() + labs(y = "Mean Rel. Abund. of vOTUs\nPredicted to Infect Host", x = "Sampling Zone") +
+  facet_wrap(~phylum,  labeller = labeller(phylum = c("Bacteroidota" = "Bacteroidota\nPhages"))) +
+  geom_line(data=tibble(x=c(1,3), y = c(150,150)), aes (x=x, y=y), inherit.aes = FALSE) +
+  geom_text(data=tibble(x=2, y = c(151)), aes (x=x, y=y,  label = '**', size = 4), inherit.aes = FALSE, show.legend = FALSE) +
+  geom_line(data=tibble(x=c(2,3), y = c(140,140)), aes (x=x, y=y), inherit.aes = FALSE) +
+  geom_text(data=tibble(x=2.5, y = c(141)), aes (x=x, y=y,  label = '***', size = 4), inherit.aes = FALSE, show.legend = FALSE) +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 11, face="bold"),
+    strip.text.x = element_text(size = 10, face = "bold")))
+
+(mxyco <- ang.host.long %>% filter(phylum == "Myxococcota") %>% 
+  ggplot() +
+  geom_boxplot(aes(x = Rep, y = abundance, fill = Rep), show.legend = FALSE) +
+  scale_fill_manual(values = c('#4A5043', 'azure3',"darkslateblue", '#B1B5C8','rosybrown4')) +
+  theme_light() + labs(y = "", x = "Sampling Zone") +
+  facet_wrap(~phylum,  labeller = labeller(phylum = c("Myxococcota" = "Myxococcota\nPhages"))) +
+  geom_line(data=tibble(x=c(1,3), y = c(230,230)), aes (x=x, y=y), inherit.aes = FALSE) +
+  geom_text(data=tibble(x=2, y = c(232)), aes (x=x, y=y,  label = '**', size = 4), inherit.aes = FALSE, show.legend = FALSE) +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 11, face="bold"),
+    strip.text.x = element_text(size = 10, face = "bold")))
+
+(pseudo <- ang.host.long %>% filter(phylum == "Pseudomonadota") %>% 
+  ggplot() +
+  geom_boxplot(aes(x = Rep, y = abundance, fill = Rep), show.legend = FALSE) +
+    scale_fill_manual(values = c('#4A5043', 'azure3', "darkslateblue", '#B1B5C8','rosybrown4')) +
+  #scale_fill_manual(values = c('#4A5043', '#904C77', '#B1B5C8')) +
+  theme_light() + labs(y = "", x = "Sampling Zone") +
+  facet_wrap(~phylum,  labeller = labeller(phylum = c("Pseudomonadota" = "Pseudomonadota\nPhages"))) +
+  geom_line(data=tibble(x=c(1,2), y = c(5220,5220)), aes (x=x, y=y), inherit.aes = FALSE) +
+  geom_text(data=tibble(x=1.5, y = c(5230)), aes (x=x, y=y,  label = '**', size = 4), inherit.aes = FALSE, show.legend = FALSE) +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 11, face="bold"),
+    strip.text.x = element_text(size = 10, face = "bold")))
+
+
+(hoststogetherang <- plot_grid(bact, mxyco, pseudo, ncol = 3, rel_widths = c(1.1,1,1)) )
+```
+```{r}
+#hopland now
+
+(nitro <- hop.host.long %>% filter(phylum == "Nitrospirota") %>% 
+  ggplot() +
+  geom_boxplot(aes(x = Rep, y = abundance, fill = Rep), show.legend = FALSE) +
+  scale_fill_manual(values = c('#4A5043', 'azure3',"darkslateblue",'#B1B5C8', 'rosybrown4')) +
+  theme_light() + labs(y = "Mean Rel. Abund. of vOTUs\nPredicted to Infect Host", x = "Sampling Zone") +
+  facet_wrap(~phylum,  labeller = labeller(phylum = c("Nitrospirota" = "Nitrospirota\nPhages"))) +
+  geom_line(data=tibble(x=c(1,3), y = c(115,115)), aes (x=x, y=y), inherit.aes = FALSE) +
+  geom_text(data=tibble(x=2, y = c(117)), aes (x=x, y=y,  label = '*', size = 4), inherit.aes = FALSE, show.legend = FALSE) +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 11, face="bold"),
+    strip.text.x = element_text(size = 10, face = "bold")))
+
+(gemma2 <- hop.host.long %>% filter(phylum == "Gemmatimonadota") %>% 
+  ggplot() +
+  geom_boxplot(aes(x = Rep, y = abundance, fill = Rep), show.legend = FALSE) +
+  scale_fill_manual(values = c('#4A5043', 'azure3', "darkslateblue", "darkorchid4", '#B1B5C8','rosybrown4')) +
+  theme_light() + labs(y = "", x = "Sampling Zone") +
+  facet_wrap(~phylum,  labeller = labeller(phylum = c("Gemmatimonadota" = "Gemmatimonadota\nPhages"))) +
+  geom_line(data=tibble(x=c(1,3), y = c(150,150)), aes (x=x, y=y), inherit.aes = FALSE) +
+  geom_text(data=tibble(x=2, y = c(151)), aes (x=x, y=y,  label = '**', size = 4), inherit.aes = FALSE, show.legend = FALSE) +
+  geom_line(data=tibble(x=c(2,3), y = c(142,142)), aes (x=x, y=y), inherit.aes = FALSE) +
+  geom_text(data=tibble(x=2.5, y = c(143)), aes (x=x, y=y,  label = '*', size = 4), inherit.aes = FALSE, show.legend = FALSE) +
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 11, face="bold"),
+    axis.title.y = element_text(size = 11, face="bold"),
+    strip.text.x = element_text(size = 10, face = "bold")))
+
+(hoststogetherhop <- plot_grid(nitro, gemma2, ncol = 2, rel_widths = c(1.1, 1)) )
+```
+
+```{r}
+
+img <- image_read("../FinalScripts/TriangleEditCol.png")
+img2 <- image_read("../FinalScripts/MapFinal.png")
+
+#(triangles <- plot_grid(triangle_plot_a, triangle_plot_h, ncol = 1))
+
+(fig1Atop <- plot_grid(img2, img, ncol = 2) + draw_image(img2, scale = 0.95, x = 1, y = 1, hjust = 0.95, vjust = 1, halign = 0, valign = 0) + draw_image(img, scale = 1, x = 1, y = 1, hjust = 1.00, vjust = 1.02, halign = 1, valign = 0.7) )
+
+# (fig1Atop <- plot_grid(main_map, tri, ncol = 2) + draw_image(img, scale = 0.9, x = 1, y = 1, hjust = 1.05, vjust = 1.02, halign = 1, valign = 0.7))
+
+#(fig1Atop <- plot_grid(main_map, fig1Aright, ncol = 2, rel_widths = c(1,1)))
+#(fig1Atop <- plot_grid(main_map, NULL, ncol = 2, rel_widths = c(1,1)))
+#(fig1A <- plot_grid(timeline_plot, combined, ncol = 1, rel_heights = c(0.9, 1.3), rel_widths = c(1, 0.4)))
+(fig1A <- plot_grid(fig1Atop, timeline_plot, ncol = 1, rel_heights = c(1.3, .9)))
+(fig1top <- plot_grid(fig1A, d, nrow = 1, rel_widths = c(1,1.6), labels = c("A", "B"), label_size = 15))
+(fig1bot <- plot_grid(ctonplot, hoststogetherang, hoststogetherhop, nrow = 1, labels = c("C", "D", "E"), rel_widths = c(1,1.2,.9), label_size = 16))
+
+(fig1 <- plot_grid(fig1top, fig1bot, ncol = 1, rel_heights = c(2, 1.4) ) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+
+ggsave("Figure1_WY_space.png", fig1, height = 7, width = 15, dpi = 600)
+
+
+
+#now seperate figures for Joanne
+(fig1Atop1 <- plot_grid(img2, img, ncol = 3, labels = c("A", "B")) + draw_image(img2, scale = 0.7, x = 1, y = 1, hjust = 0.9, vjust = 1, halign = 0, valign = 0) + draw_image(img, scale = 0.7, x = 1, y = 1, hjust = 1, vjust = 1.02, halign = 1, valign = 0.7) )
+
+(fig1A1 <- plot_grid(fig1Atop1, timeline_plot, ncol = 1, rel_heights = c(1, 1), labels = c("", "C")) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+ggsave("Figure1_sampledesign.svg", fig1A1, dev = "svg", dpi = 600, width = 10)
+
+#need to figure out how to put in the B but this is a later Jane problem
+pcoa_a_12_time3 <- pcoa_a_12_time + theme(legend.position = "bottom")
+legend.pcoa <- get_legend(pcoa_a_12_time3) 
+pcoa_a_12_time2 <- pcoa_a_12_time + theme(legend.position = "none")
+
+(a <- plot_grid(pcoa_a_12_time2, pcoa_h_12_time, ncol=2))
+
+(c <- plot_grid(NULL, legend.pcoa, NULL, ncol = 1, rel_widths = c(-.9,1,-.9) ))
+
+(d  <-  plot_grid(a,c, ncol=2, rel_widths = c(5,.6))+ theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+(e <- plot_grid(a, c, ncol = 1, rel_heights = c(5, .6)))
+
+(figtop2 <- plot_grid(e, ctonplot, ncol = 1, rel_heights = c(1.5, 1), labels = c("A", "B")))
+
+title_ang <- ggdraw() + 
+  draw_label("Angelo", fontface = 'bold', x = 0.56, hjust = 0.5, size = 13)
+
+anghostwtitle <- plot_grid(title_ang, hoststogetherang, ncol = 1, rel_heights = c(0.1, 1))
+
+title_hop<- ggdraw() + 
+  draw_label("Hopland", fontface = 'bold', x = 0.53, hjust = 0.5, size = 13)
+
+hophostwtitle <- plot_grid(title_hop, hoststogetherhop, ncol = 1, rel_heights = c(0.1, 1))
+
+(figbottom1 <- plot_grid(anghostwtitle, hophostwtitle,  rel_widths = c(1.2, 0.8), labels = c("C", "D"), label_size = 16))
+
+(figlong <- plot_grid(figtop2, figbottom1, ncol = 1, rel_heights = c(3, 1.5)) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+(figlong2 <- plot_grid(e, NULL, ctonplot, NULL, figbottom1, ncol = 1, rel_heights = c(1.4, 0.1, 1, 0.05, 1.2), labels = c("A", "", "B", "", ""), label_size = 16) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+(figlong2 <- plot_grid(e, NULL, ctonplot, NULL, figbottom1, ncol = 1, rel_heights = c(1.4, 0.01, 1, 0.05, 1.2), labels = c("A", "", "B", "", ""), label_size = 16) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+ggsave("Figure1_testformat.png",figlong2, width = 10, height = 14.5)
+```
+

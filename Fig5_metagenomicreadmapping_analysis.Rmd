@@ -1,0 +1,229 @@
+---
+title: "Figure 4 - Water Year - Metagenomes"
+output: html_document
+date: "2025-03-18"
+---
+```{r}
+library(tidyverse)
+library(vegan)
+library(ape)
+library(rstatix)
+library(cowplot)
+library(pairwiseAdonis)
+library(tibble)
+
+#for stats
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(effsize)
+```
+
+
+```{r}
+otu <- read.csv('../2502.allWY.mg.covm.5.mean.tsv', sep = "\t") %>% column_to_rownames(var = 'Contig') %>% filter(rowSums(across(where(is.numeric)))!=0) 
+otu2 <- otu %>% rename_with(~ str_extract(., "(?<=WaterYear_).*?(?=_t0_mapped.sort.90filt.Mean)"))
+
+write.csv(otu2, "../2506_metagenomevOTUtablenozeros.csv")
+
+otuall <- otu2 
+otuang <- otu2 %>% select(starts_with("A")) %>% filter(rowSums(across(where(is.numeric)))!=0) 
+otuhop <- otu2 %>% select(starts_with("H")) %>% filter(rowSums(across(where(is.numeric)))!=0) 
+
+metaall <- read_csv("../2503_Metadatafinal_metagenomes.csv")
+meta.tot <- metaall %>% filter(sample_name %in% colnames(otuall))
+meta.a <- metaall %>% filter(sample_name %in% colnames(otuang))
+meta.h <- metaall %>% filter(sample_name %in% colnames(otuhop))
+```
+
+```{r}
+otu <- t(otuang)
+otu.xform <- decostand(otu, method="hellinger")
+otu.dist.a <- as.matrix(vegdist(otu.xform, method='bray')) 
+pcoa <- pcoa(as.dist(otu.dist.a))
+axes <- as.data.frame(pcoa$vectors)
+eigval <- round(pcoa$values$Relative_eig * 100, digits = 2)
+eigval <- data.frame( PC = 1:length(eigval), Eigval = eigval)
+
+
+#define the axes for the plot - adjust if plotting dimensions other than 1 and 2
+pco1.ang <- paste("PCo1 (", eigval[[1,2]], " %)", sep = "")
+pco2.ang <- paste("PCo2 (", eigval[[2,2]], " %)", sep = "")
+pco3.ang <- paste("PCo3 (", eigval[[3,2]], " %)", sep = "")
+pco4.ang <- paste("PCo3 (", eigval[[4,2]], " %)", sep = "")
+
+axes2.ang <- axes %>% rownames_to_column("sample_name") %>% left_join(meta.a, by = "sample_name")
+```
+
+```{r}
+meta.a <- meta.a[match(rownames(otu.dist.a), meta.a$sample_name), ]
+identical(rownames(otu.dist.a), meta.a$sample_name)
+
+adonis2(as.dist(otu.dist.a) ~ Rep + days + Depth  + `GWC %` + `Total_C(%)` + `Total_N(%)` + pH, data = meta.a, by = 'terms')
+#depth (39% of variation), rep (13%) and total N (3%) are significant 
+```
+
+```{r}
+(pcoa.ang <-  ggplot(mapping = aes(x, y)) +
+  geom_point(data=axes2.ang, aes(x=Axis.1, y=Axis.2, fill=Depth, shape=Rep), size=5, color = 'black',
+             show.legend = TRUE) +
+  labs(title = "Angelo - Metagenomes",x= pco1.ang, y=pco2.ang) + theme_minimal() +
+  scale_fill_manual(values=c("darkslategray", "burlywood", "lightsteelblue"), labels = c('0-10 cm', '20-30 cm', '50-80 cm'),) +
+  scale_shape_manual(
+    name = "Sampling Zone",
+    #labels = c('0-10 cm', '20-30 cm', '50-80 cm'),
+    values = c(24, 22, 21),
+    guide = guide_legend(override.aes = list(fill = "black", color = "black"))
+  ) +
+  guides(fill = guide_legend(override.aes = list(shape = 21, color = "black"))) +
+  theme_linedraw(base_size = 16) +
+  theme(
+    legend.text = element_text(size = 11),
+    legend.title = element_text(size = 11, face="bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(size = 14, face="bold", hjust = 0.5),
+    axis.title.x = element_text(size = 13, face="bold"),
+    axis.title.y = element_text(size = 13, face="bold"),
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_line(color = "gray80")
+  ) +
+   annotate("text", x=0.35, y=0.36, label= "PERMANOVA", size = 4, fontface =2) + 
+  annotate("text", x = 0.35, y=0.3290, label = "Depth: p < 0.001 (***)", size = 4) +
+   annotate("text", x = 0.35, y=0.298, label = "Zone: p < 0.001 (***)", size = 4) +
+   annotate("text", x = 0.35, y=0.267, label = "Total N: p = 0.012 (*)", size = 4))
+```
+
+```{r}
+otu <- t(otuhop)
+otu.xform <- decostand(otu, method="hellinger")
+otu.dist.h <- as.matrix(vegdist(otu.xform, method='bray')) 
+pcoa <- pcoa(as.dist(otu.dist.h))
+axes <- as.data.frame(pcoa$vectors)
+eigval <- round(pcoa$values$Relative_eig * 100, digits = 2)
+eigval <- data.frame( PC = 1:length(eigval), Eigval = eigval)
+
+#define the axes for the plot 
+pco1.hop <- paste("PCo1 (", eigval[[1,2]], " %)", sep = "")
+pco2.hop <- paste("PCo2 (", eigval[[2,2]], " %)", sep = "")
+pco3.hop <- paste("PCo3 (", eigval[[3,2]], " %)", sep = "")
+
+axes2.hop <- axes %>% rownames_to_column("sample_name") %>% left_join(meta.h, by = "sample_name")
+```
+
+```{r}
+meta.h <- meta.h[match(rownames(otu.dist.h), meta.h$sample_name), ]
+identical(rownames(otu.dist.h), meta.h$sample_name)
+
+adonis2(as.dist(otu.dist.h) ~ Rep + days + Depth + pH + `GWC %` + `Total_C(%)` + `Total_N(%)`, data = meta.h, by = 'terms')
+#Depth (30% of variance), Rep (10%) and pH (3%) are all significant
+```
+
+```{r}
+(pcoa.hop <-  ggplot(mapping = aes(x, y)) +
+  geom_point(data=axes2.hop, aes(x=Axis.1, y=Axis.2, fill=Depth, shape=Rep), size=5, color = 'black',
+             show.legend = TRUE) +
+  labs(title = "Hopland - Metagenomes",x= pco1.hop, y=pco2.hop) + theme_minimal() +
+  scale_fill_manual(values=c("darkslategray", "burlywood", "lightsteelblue", "gray90"), labels = c('0-10 cm', '20-30 cm', '50-80 cm')) +
+  scale_shape_manual(
+    name = "Sampling Zone",
+    #labels = c('0-10 cm', '20-30 cm', '50-80 cm'),
+    values = c(24, 22, 21),
+    guide = guide_legend(override.aes = list(fill = "black", color = "black"))
+  ) +
+  guides(fill = guide_legend(override.aes = list(shape = 21, color = "black"))) +
+  theme_linedraw(base_size = 16) +
+  theme(
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12.5, face="bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(size = 14, face="bold", hjust = 0.5),
+    axis.title.x = element_text(size = 13, face="bold"),
+    axis.title.y = element_text(size = 13, face="bold"),
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_line(color = "gray80"),
+    legend.position = "bottom"
+  ) +
+   annotate("text", x=0.24, y=0.33, label= "PERMANOVA", size = 4, fontface =2) + 
+  annotate("text", x = 0.24, y=0.30, label = "Depth: p < 0.001 (***)", size = 4) +
+   annotate("text", x = 0.24, y=0.27, label = "Zone: p < 0.001 (***)", size = 4) +
+   annotate("text", x = 0.24, y=0.24, label = "pH: p = 0.020 (*)", size = 4))
+```
+
+
+
+```{r}
+otu <- otuall
+otu.nsing <- otu %>% filter(rowSums(. > 0) > 1)
+
+otuall <- t(otu.nsing %>% mutate_if(is.numeric, round))
+all_richness <- estimateR(otuall)
+all_evenness <- diversity(otuall) / log(specnumber(otuall))
+all_shannon <- diversity(otuall, index = "shannon")
+all_simpson <- diversity(otuall, "simpson")
+all_alphadiv <- as.data.frame(cbind(t(all_richness), 
+                         all_shannon, all_evenness, all_simpson)) 
+
+all_alphadiv2 <- all_alphadiv %>% rownames_to_column("sample_name") %>% left_join(metaall, by = "sample_name")
+all_alphadiv2 <- all_alphadiv2 %>% mutate(Site = if_else(Site == "A", "Angelo", "Hopland"))
+
+all_alphadiv2$Depth <- factor(all_alphadiv2$Depth, levels = rev(unique(all_alphadiv2$Depth)))
+
+
+(splitsitebox <- ggplot(all_alphadiv2) +
+  geom_boxplot(aes(x=S.obs, y=Depth, fill = Depth), show.legend = FALSE) +
+  scale_fill_manual(values = c("lightsteelblue", "burlywood", "darkslategray")) +
+  scale_shape_manual(
+    name = "Sampling Zone", values = c(24, 22, 21)) +
+  geom_jitter(aes(x=S.obs, y=Depth, shape = Rep), size = 3, alpha = 0.5, fill = "black")+ 
+  facet_wrap(~Site) +
+  labs(x = "Viral Richness") + theme_minimal() +
+    scale_y_discrete(labels = c(
+  "1" = "0-10 cm",
+  "3" = "20-30 cm",
+  "5" = "50-80 cm"
+)) +
+    theme(strip.text.x = element_text(size = 13, face = "bold"), 
+          legend.text = element_text(size = 11, face="bold"),
+    legend.title = element_text(size = 12, face="bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(size = 14, face="bold", hjust = 0.5),
+    axis.title.x = element_text(size = 13, face="bold"),
+    axis.title.y = element_text(size = 13, face="bold"),
+          legend.position = "bottom"))
+
+(kw_results <- all_alphadiv2 %>%
+  group_by(Site) %>%
+  kruskal_test(S.obs ~ Depth))
+
+(posthoc <- all_alphadiv2 %>%
+  group_by(Site) %>%
+  dunn_test(S.obs ~ Depth, p.adjust.method = "bonferroni"))
+
+
+alphadiva <- filter(all_alphadiv2, Site == "Angelo")
+alphadivh <- filter(all_alphadiv2, Site == "Hopland")
+
+# Using lmer because rep is a random effect (since each Rep has repeated measures across depths) but I want to ssee if it effects S.obs
+lmma <- lmer(S.obs ~ Depth + (1 | Rep), data = alphadiva)
+hist(residuals(lmma)) #residuals roughly normal
+summary(lmma)
+emmeans(lmma, pairwise ~ Depth) #1 and 5, and 1 and 3 are significantly diff, 3 and 5 are not
+
+lmmh <- lmer(S.obs ~ Depth + (1 | Rep), data = alphadivh)
+hist(residuals(lmmh)) #roughly normal
+summary(lmmh)
+emmeans(lmmh, pairwise ~ Depth) #Again, 1 and 5, and 1 and 3 are significantly diff, 3 and 5 are not
+```
+
+```{r}
+leg1 <- get_legend(pcoa.hop)
+pcoa.hop2 <- pcoa.hop + theme(legend.position = "none")
+pcoa.ang2 <- pcoa.ang + theme(legend.position = "none")
+
+(fig4top2 <- plot_grid(pcoa.ang2, pcoa.hop2, NULL, splitsiteboxnl, labels = c("A", "", "",  "B"), label_size = 20, ncol = 4, rel_widths = c(1, 1, 0.01, 1.2)))
+(figtop2 <- plot_grid(fig4top2, leg1, ncol = 1, rel_heights = c(4, .35)) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+ggsave("Figure4_WY_metaGs_v2.png", figtop2, height = 5, width = 15)
+```

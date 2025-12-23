@@ -1,0 +1,211 @@
+---
+title: "Figure 2 - Water Year - Temporal Linear Trends with Bray-Curtis Community Composition"
+output: html_document
+date: "2025-03-17"
+---
+
+```{r}
+library(tidyverse)
+library(vegan)
+library(cowplot)
+library(ape)
+```
+
+```{r}
+#load in files
+otu <- read.csv("../2407_normalizedabundancetable_singremoved.csv", row.names = 1)
+angelo.otu <- otu %>% select(AA10_1:AC4_2) %>% filter(rowSums(across(where(is.numeric)))!=0) 
+hopland.otu <- otu %>% select(HA10_1:HC4_2) %>% filter(rowSums(across(where(is.numeric)))!=0) 
+
+#metadata table
+meta <- read.csv("../2412_metadataALL.csv")
+angelo.m <- meta[meta$Site == 'Angelo', ]
+hopland.m <- meta[meta$Site == 'Hopland', ]
+```
+
+```{r}
+otu <- angelo.otu
+otu <- t(otu)
+otu.xform <- decostand(otu, method="hellinger")
+otu.dist.ang <- as.matrix(vegdist(otu.xform, method='bray')) 
+pcoa <- pcoa(as.dist(otu.dist.ang))
+axes <- as.data.frame(pcoa$vectors)
+eigval <- round(pcoa$values$Relative_eig * 100, digits = 2)
+eigval <- data.frame( PC = 1:length(eigval), Eigval = eigval)
+
+#define the axes for the plot - adjust if plotting dimensions other than 1 and 2
+pco1.a <- paste("PCo1 (", eigval[[1,2]], " %)", sep = "")
+pco2.a <- paste("PCo2 (", eigval[[2,2]], " %)", sep = "")
+pco3.a <- paste("PCo3 (", eigval[[3,2]], " %)", sep = "")
+
+meta <- angelo.m
+axes2 <- cbind(axes,meta) %>% mutate(month_date = case_when(Timepoint == "10" ~ "11/14",
+                                                                              Timepoint == "1" ~ "3/19",
+                                                                              Timepoint == "2" ~"4/7",
+                                                                              Timepoint == "3" ~'4/29', 
+                                                                              Timepoint == "4" ~ '5/21', 
+                                                                              Timepoint == "6" ~'6/15'))
+```
+
+```{r}
+(pcoa_a_13_time <- ggplot(data=axes2, aes(x=Axis.1, y=Axis.3)) +
+  geom_point(aes(fill=factor(month_date, level=c('3/19', '4/7', '4/29', '5/21', '6/15', '11/14')), shape=Rep), size = 6, color = "black", alpha = 0.9) +
+  labs(title = "Angelo", x= pco1.a, y=pco3.a) +
+  theme_linedraw(base_size = 16) +
+  scale_fill_manual(
+    #values = c('#3e049c', '#8606a6', '#a62098', '#d5546e', '#f68d45', '#fdae32', '#fcd225'),
+    values = c("#a6d96a", "#1a9641", "#66bd63","burlywood1","burlywood", "#4575b4"),
+    name = "Sampling Date"
+  ) +
+  scale_shape_manual(
+    name = "Sampling Zone",
+    labels = c('A', 'B', 'C'),
+    values = c(24, 22, 21),
+    guide = guide_legend(override.aes = list(fill = "black", color = "black"))
+  ) +
+  guides(fill = guide_legend(override.aes = list(shape = 21, color = "black"))) +
+  theme(
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10, face = 'bold'),
+    axis.text.x = element_text(size = 9),
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(size = 12, face="bold", hjust = 0.5),
+    axis.title.x = element_text(size = 10, face = 'bold'),
+    axis.title.y = element_text(size = 10, face = 'bold'),
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_line(color = "gray80"),
+    legend.title.align=0.5
+    #legend.position = 'bottom', legend.box="vertical", legend.margin=margin()
+  ) )
+```
+
+
+
+Temporal Distance Decay Plots
+
+1. Load in functions
+```{r}
+#function for microbial otu tables (hellinger and bray)
+bray.xform.dist <- function(otu.in) {
+  data_t <- t(otu.in)
+  data_xform <- decostand(data_t, method = 'hellinger')
+  data_dist <- as.matrix(vegdist(data_xform, method = 'bray'))
+}
+
+#function to tidy dfs for plotting
+tidy.dist <- function(dist.mat, dist.type = "DistanceUsed") {
+  dist.mat %>%
+    as.data.frame() %>%
+    mutate(SampleID.x = row.names(.)) %>%
+    gather(key = "SampleID.y", value = !!sym(dist.type), - SampleID.x)
+}
+```
+
+2. Subset data
+```{r}
+#votus
+ang.a <- angelo.otu %>% select(starts_with("AA"))
+ang.b <- angelo.otu %>% select(starts_with("AB"))
+ang.c <- angelo.otu %>% select(starts_with("AC"))
+
+hop.a <- hopland.otu %>% select(starts_with("HA"))
+hop.b <- hopland.otu %>% select(starts_with("HB"))
+hop.c <- hopland.otu %>% select(starts_with("HC"))
+
+#temporaldfs
+ang.meta.a <- angelo.m %>% select(SampleID, days) %>% filter(SampleID %in% colnames(ang.a)) %>% column_to_rownames(var = 'SampleID')
+ang.meta.b <- angelo.m %>% select(SampleID, days) %>% filter(SampleID %in% colnames(ang.b)) %>% column_to_rownames(var = 'SampleID')
+ang.meta.c <- angelo.m %>% select(SampleID, days) %>% filter(SampleID %in% colnames(ang.c)) %>% column_to_rownames(var = 'SampleID')
+
+hop.meta.a <- hopland.m %>% select(SampleID, days) %>% filter(SampleID %in% colnames(hop.a)) %>% column_to_rownames(var = 'SampleID')
+hop.meta.b <- hopland.m %>% select(SampleID, days) %>% filter(SampleID %in% colnames(hop.b)) %>% column_to_rownames(var = 'SampleID')
+hop.meta.c <- hopland.m %>% select(SampleID, days) %>% filter(SampleID %in% colnames(hop.c)) %>% column_to_rownames(var = 'SampleID')
+```
+
+```{r}
+#calculate bray dist across time within Rep
+a.a.time.dist <- bray.xform.dist(ang.a)
+a.a.time.bray <- tidy.dist(a.a.time.dist , "BrayDist") %>% mutate(Site = "Angelo")
+
+a.b.time.dist <- bray.xform.dist(ang.b)
+a.b.time.bray <- tidy.dist(a.b.time.dist , "BrayDist") %>% mutate(Site = "Angelo")
+
+a.c.time.dist <- bray.xform.dist(ang.c)
+a.c.time.bray <- tidy.dist(a.c.time.dist , "BrayDist") %>% mutate(Site = "Angelo")
+
+h.a.time.dist <- bray.xform.dist(hop.a)
+h.a.time.bray <- tidy.dist(h.a.time.dist , "BrayDist") %>% mutate(Site = "Hopland")
+
+h.b.time.dist <- bray.xform.dist(hop.b)
+h.b.time.bray <- tidy.dist(h.b.time.dist , "BrayDist") %>% mutate(Site = "Hopland")
+
+h.c.time.dist <- bray.xform.dist(hop.c)
+h.c.time.bray <- tidy.dist(h.c.time.dist , "BrayDist") %>% mutate(Site = "Hopland")
+
+
+#calculate temporal dist within Rep
+ang_t_a <- as.matrix(vegdist(ang.meta.a, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+ang_t_b <- as.matrix(vegdist(ang.meta.b, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+ang_t_c <- as.matrix(vegdist(ang.meta.c, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+
+hop_t_a <- as.matrix(vegdist(hop.meta.a, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+hop_t_b <- as.matrix(vegdist(hop.meta.b, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+hop_t_c <- as.matrix(vegdist(hop.meta.c, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+
+#join dfs, concat and filter
+
+aacomb <- a.a.time.bray %>% inner_join(ang_t_a, by = c("SampleID.x", "SampleID.y"))
+abcomb <- a.b.time.bray %>% inner_join(ang_t_b, by = c("SampleID.x", "SampleID.y"))
+accomb <- a.c.time.bray %>% inner_join(ang_t_c, by = c("SampleID.x", "SampleID.y"))
+
+hacomb <- h.a.time.bray %>% inner_join(hop_t_a, by = c("SampleID.x", "SampleID.y"))
+hbcomb <- h.b.time.bray %>% inner_join(hop_t_b, by = c("SampleID.x", "SampleID.y"))
+hccomb <- h.c.time.bray %>% inner_join(hop_t_c, by = c("SampleID.x", "SampleID.y"))
+
+combinedf <- rbind(aacomb, abcomb, accomb, hacomb, hbcomb, hccomb)
+combinedfilt <- combinedf %>% filter(BrayDist > 0)
+```
+
+
+```{r}
+
+combinedfilt2 <- combinedfilt %>% filter(TemporalDist > 0)
+
+(viraldistd <- ggplot(combinedfilt2, aes(TemporalDist, BrayDist, fill = Site))  +
+           geom_smooth(data = subset(combinedfilt, Site == "Angelo"), method = "lm", se = FALSE, formula = y ~ x, color = 'darkslategray') +
+           geom_smooth(data = subset(combinedfilt, Site == "Hopland"), method = "lm", se = FALSE, formula = y ~ x, color = 'darkolivegreen4') +
+           geom_point(col = 'black', pch = 21, size = 3) +
+           scale_fill_manual(values = c('darkslategray', 'darkolivegreen4')) + theme_pubclean() +
+           stat_regline_equation(label.y = .89, label.x = 0.05, formula = y ~ x, size = 4) +
+           stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "*`,`~")), label.y = 0.87, label.x = 0.05, size = 4) +
+           facet_wrap(~Site) + 
+           labs(x = 'Temporal Distance (days)', y = 'Viral Community Bray-Curtis Dissimilarity') + 
+           theme(axis.title = element_text(face = "bold"), 
+                 legend.position = 'none',
+                 strip.text.x = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11),
+    axis.title.x = element_text(size = 12, face = 'bold'),
+    axis.title.y = element_text(size = 12, face = 'bold'),
+                 ))
+
+summary(lm(BrayDist ~ TemporalDist, data = subset(combinedfilt, Site == "Angelo")))
+
+#for paper stats
+angddlatesttime <- combinedfilt2 %>% filter(Site == "Angelo") %>% filter(TemporalDist > 222) #24
+angbraycurt80 <- angddlatesttime %>% filter(BrayDist > .80) #0
+
+hopddlatesttime <- combinedfilt2 %>% filter(Site == "Hopland") %>% filter(TemporalDist > 222) #24
+hopbraycurt80 <- hopddlatesttime %>% filter(BrayDist > .80) #22
+```
+
+```{r}
+legend.pcoa <- get_legend(pcoa_a_13_time) 
+pcoa_a_13_time2 <- pcoa_a_13_time + theme(legend.position = "none")
+
+
+(fig2new <- plot_grid(pcoa_a_13_time, viraldistd, ncol = 2, rel_widths = c(1, 1.6), labels = c("A", "B")) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+ggsave("Figure3_WY_time.png", fig2new, height = 5, width = 16)
+```
+
