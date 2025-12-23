@@ -1,0 +1,992 @@
+---
+title: "Soil Environment of the Water Year"
+output: html_document
+date: "2025-04-23"
+---
+
+########################
+Environment - Viromes
+########################
+
+```{r}
+library(heatmaply)
+library(pheatmap)
+library(ggplotify)
+library(emmeans)
+library(dplyr)
+library(broom)
+```
+
+
+1. Between sites
+```{r}
+totaldf <- read_csv('../../all_samples.csv') %>% mutate(sample_id2 = sub("^([^_]*_[^_]*)_.*$", "\\1", sample_id))
+
+TotC <- totaldf %>% filter(`Total_C(%)` > 0) %>% select(sample_id2, depth, `Total_C(%)`)
+TotN <- totaldf %>% filter(`Total_N(%)` > 0) %>% select(sample_id2, depth, `Total_N(%)`)
+pH <- totaldf %>% filter(pH > 0) %>% select(sample_id2, depth, pH)
+GWC <-  totaldf %>% filter(`GWC %` > 0) %>% select(sample_id2, depth, date_collected, `GWC %`) 
+
+merged_df <- GWC %>%
+  left_join(TotC, by = c("sample_id2", "depth")) %>%
+  left_join(TotN, by = c("sample_id2", "depth")) %>%
+  left_join(pH, by = c("sample_id2", "depth")) %>% 
+  mutate(Time = substr(sample_id2, 3,4)) %>% 
+  mutate(Site = substr(sample_id2, 1,1))
+
+table(merged_df$Site)
+
+merged_df2 <- merged_df %>% select(sample_id2, `GWC %`:pH) %>% filter(sample_id2 != "HA1_D2") %>% filter(sample_id2 != "HB1_D4")
+
+env.plots.tidy <- merged_df2  %>% pivot_longer(names_to = "Property", values_to = "Value", -sample_id2) %>% 
+                  group_by(Property) %>% 
+                  mutate(zValue = (Value - mean(Value))/sd(Value)) %>% 
+                  select(sample_id2, Property, zValue) %>% 
+                  spread(key = Property, value = zValue) %>% 
+                  as.data.frame() %>% column_to_rownames(var="sample_id2")
+
+site_vector <- c(rep("Angelo", 144), rep("Hopland", 153))
+names(site_vector) <- rownames(env.plots.tidy)
+
+# Create the annotation data frame
+annotation_row <- data.frame(Site = site_vector)
+rownames(annotation_row) <- rownames(env.plots.tidy)
+
+# Define annotation colors
+annotation_colors <- list(
+  Site = c(Angelo = "coral", Hopland = "turquoise")
+)
+
+# Draw the heatmap with row annotations
+heatmap <- pheatmap(
+  env.plots.tidy,
+  color = plasma(15),
+  fontsize_row = 6,
+  annotation_row = annotation_row,
+  annotation_colors = annotation_colors
+)
+
+ggsave('HeatMap_EnvData.png', heatmap, width = 10, height = 10)
+
+
+merged_df_3 <- merged_df %>% pivot_longer(names_to = "Property", values_to = "Value", -c(sample_id2, depth, date_collected, Time, Site)) %>% mutate(Site = case_when(Site == "A" ~ "Angelo", Site == "H" ~ "Hopland"))
+
+(envboxplots <- ggplot(merged_df_3, aes(x = Site, y = Value, fill = Site)) + geom_boxplot(show.legend = FALSE) + facet_wrap(~Property, scales = "free") + stat_compare_means(method = "wilcox"))
+
+compare_means(Value ~ Site, data = merged_df_3, method = "wilcox", group.by = "Property")
+
+ggsave("EnvironmentBySite.png", envboxplots)
+
+hm.2 <- as.grob(heatmap)
+(two <- plot_grid(envboxplots, hm.2,  ncol = 2, labels = c("A", "B")) + theme(plot.background = element_rect(fill = "white", color = 'white')))
+
+ggsave('HeatMap_BoxPlots_EnvData.png', two, width = 13, height = 8)
+```
+
+
+2. Within sites - by Replicate
+```{r}
+env.a  <- read_csv('../../2412_metadataALL.csv') %>% filter(Site == 'Angelo') %>% select(SampleID, Rep, Timepoint, `GWC %`:pH, CtoN) %>%  group_by(Timepoint, Rep) %>% summarise(across(everything(), mean, na.rm = TRUE))
+env.h  <- read_csv('../../2412_metadataALL.csv') %>% filter(Site == 'Hopland') %>% select(SampleID, Rep, Timepoint, `GWC %`:pH, CtoN) %>%  group_by(Timepoint, Rep) %>% summarise(across(everything(), mean, na.rm = TRUE))
+
+#stats - normality - ang
+shapiro.test(env.a$`GWC %`) #not signifcant = normal
+shapiro.test(env.a$`Total_C(%)`) #not signifcant = normal
+shapiro.test(env.a$`Total_N(%)`) #not significant = normal
+shapiro.test(env.a$pH) #not significant = normal
+shapiro.test(env.a$CtoN) #not significant = normal
+
+#models - ang - total N, total C and CtoN are significantly diff
+angelo.aov <- aov(`GWC %` ~ Rep, env.a)
+summary(aov(angelo.aov)) #notsignificant
+
+angelo.aov <- aov(`Total_C(%)` ~ Rep, env.a)
+summary(aov(angelo.aov)) #significant
+pairs(emmeans(angelo.aov, ~Rep)) #A and B, A and C
+
+angelo.aov <- aov(`Total_N(%)` ~ Rep, env.a)
+summary(aov(angelo.aov)) #significant
+pairs(emmeans(angelo.aov, ~Rep)) #A and B only
+
+angelo.aov <- aov(`pH` ~ Rep, env.a)
+summary(aov(angelo.aov)) #not signficant
+
+angelo.aov <- aov(`CtoN` ~ Rep, env.a)
+summary(aov(angelo.aov)) #significant
+pairs(emmeans(angelo.aov, ~Rep)) #A and B, A and C
+
+
+
+#stats - normality - hop
+shapiro.test(env.h$`GWC %`) #not signifcant = normal
+shapiro.test(env.h$`Total_C(%)`) #not signifcant = normal
+shapiro.test(env.h$`Total_N(%)`) #not significant = normal
+shapiro.test(env.h$pH) #significant = non-normal!****
+shapiro.test(env.h$CtoN) #not significant = normal
+
+#models - hop
+hopland.aov <- aov(`GWC %` ~ Rep, env.h)
+summary(aov(hopland.aov)) #not significant
+
+hopland.aov <- aov(`Total_C(%)` ~ Rep, env.h)
+summary(aov(hopland.aov)) #not significant
+
+hopland.aov <- aov(`Total_N(%)` ~ Rep, env.h)
+summary(aov(hopland.aov)) #not significant
+
+hopland.mod <- glm(pH ~ Rep, env.h, family = Gamma(link = "log"))
+summary(hopland.mod) #not significant
+
+hopland.aov <- aov(`CtoN` ~ Rep, env.h)
+summary(aov(hopland.aov)) #not significant
+
+
+#plotting
+
+env.a.tidy <- env.a %>% pivot_longer(-c(SampleID, Rep, Timepoint), names_to = "EnvVariable", values_to = "Value")
+env.h.tidy <- env.h %>% pivot_longer(-c(SampleID, Rep, Timepoint), names_to = "EnvVariable", values_to = "Value")
+
+
+(ang.env.rep <- ggplot(env.a.tidy, aes(x = Rep, y = Value)) + geom_boxplot(aes(fill = Rep), color = "black", pch = 21, show.legend = "FALSE") + facet_wrap(~EnvVariable, scales = "free", nrow = 1) + labs(title = "Angelo - Virome Timepoints - All Edaphic Properties", x = "Sampling Zone"))
+
+library(ggplot2)
+library(ggsignif)
+
+ang.env.rep <- ggplot(env.a.tidy, aes(x = Rep, y = Value)) +
+  geom_boxplot(aes(fill = Rep), color = "black", pch = 21, show.legend = FALSE) +
+  facet_wrap(~EnvVariable, scales = "free", nrow = 1) +
+  labs(title = "Angelo - Virome Timepoints", x = "Sampling Zone") +
+
+  # Total_C(%) comparisons
+  geom_signif(
+    data = env.a.tidy %>% filter(EnvVariable == "Total_C(%)"),
+    comparisons = list(c("A", "B")),
+    annotations = "***",
+    y_position = 3.5,
+    tip_length = 0.01
+  ) +
+  geom_signif(
+    data = env.a.tidy %>% filter(EnvVariable == "Total_C(%)"),
+    comparisons = list(c("B", "C")),
+    annotations = "**",
+    y_position = 3.2,
+    tip_length = 0.01
+  ) +
+
+  # Total_N(%) comparisons
+  geom_signif(
+    data = env.a.tidy %>% filter(EnvVariable == "Total_N(%)"),
+    comparisons = list(c("A", "B")),
+    annotations = "*",
+    y_position = 0.27,
+    tip_length = 0.01
+  ) +
+
+  # CtoN comparisons
+  geom_signif(
+    data = env.a.tidy %>% filter(EnvVariable == "CtoN"),
+    comparisons = list(c("A", "B")),
+    annotations = "**",
+    y_position = 14.5,
+    tip_length = 0.01
+  ) +
+  geom_signif(
+    data = env.a.tidy %>% filter(EnvVariable == "CtoN"),
+    comparisons = list(c("B", "C")),
+    annotations = "***",
+    y_position = 15,
+    tip_length = 0.01
+  )
+
+
+(hop.env.rep <- ggplot(env.h.tidy, aes(x = Rep, y = Value)) + geom_boxplot(aes(fill = Rep), color = "black", pch = 21, show.legend = "FALSE") + facet_wrap(~EnvVariable, scales = "free", nrow = 1) + labs(title = "Hopland - Virome Timepoints - All Edaphic Properties", x = "Sampling Zone"))
+
+(env.plots <- plot_grid(ang.env.rep, hop.env.rep, ncol = 1, labels = c("A", "B")))
+
+#gwc plots for DNA yield observational comparisons
+ang.gwc <- env.a.tidy %>% filter(EnvVariable == "GWC %")
+hop.gwc <- env.h.tidy %>% filter(EnvVariable == "GWC %")
+
+(a.gwc <- ggplot(ang.gwc, aes(x = as.factor(Timepoint), y = Value)) + geom_point(aes(fill = as.factor(Timepoint)), pch = 21, size = 5 , show.legend = FALSE) + labs(y = "GWC %", title = "Angelo - Virome Timepoints - Soil Moisture", x = "Sampling Date") + scale_x_discrete(labels = c(
+  "1" = "3/19",
+  "2" = "4/7",
+  "3" = "4/29",
+  "4" = "5/21",
+  "5" = "6/1",
+  "6" = "6/15",
+  "7" = "7/13",
+  "8" = "9/21",
+  "9" = "9/21",
+  "10" = "11/14"
+)) )
+(h.gwc <- ggplot(hop.gwc, aes(x = as.factor(Timepoint), y = Value)) + geom_point(aes(fill = as.factor(Timepoint)), pch = 21, size = 5 , show.legend = FALSE) + labs(y = "GWC %", title = "Hopland - Virome Timepoints - Soil Moisture", x = "Sampling Date") + scale_x_discrete(labels = c(
+  "1" = "3/19",
+  "2" = "4/7",
+  "3" = "4/29",
+  "4" = "5/21",
+  "5" = "6/1",
+  "6" = "6/15",
+  "7" = "7/13",
+  "8" = "9/21",
+  "9" = "9/21",
+  "10" = "11/14"
+)) )
+
+(gwc.plot <- plot_grid(a.gwc, h.gwc, ncol = 2, labels = c("C", "D")))
+
+(virsoilenvplot <- plot_grid(env.plots, gwc.plot, ncol = 1, rel_heights = c(2.3, 1)))
+
+ggsave("EnvironmentbyRep_ViromeTimepoints.png", virsoilenvplot, width = 12, height = 12)
+```
+
+```{r}
+#getting results tidy for supp table:
+
+# Define models
+models <- list(
+  list(var = "GWC %",   site = "Angelo", model_type = "ANOVA", fit = aov(`GWC %` ~ Rep, env.a)),
+  list(var = "Total_C(%)", site = "Angelo", model_type = "ANOVA", fit = aov(`Total_C(%)` ~ Rep, env.a)),
+  list(var = "Total_N(%)", site = "Angelo", model_type = "ANOVA", fit = aov(`Total_N(%)` ~ Rep, env.a)),
+  list(var = "pH",       site = "Angelo", model_type = "ANOVA", fit = aov(`pH` ~ Rep, env.a)),
+  list(var = "CtoN",     site = "Angelo", model_type = "ANOVA", fit = aov(`CtoN` ~ Rep, env.a)),
+
+  list(var = "GWC %",    site = "Hopland", model_type = "ANOVA", fit = aov(`GWC %` ~ Rep, env.h)),
+  list(var = "Total_C(%)", site = "Hopland", model_type = "ANOVA", fit = aov(`Total_C(%)` ~ Rep, env.h)),
+  list(var = "Total_N(%)", site = "Hopland", model_type = "ANOVA", fit = aov(`Total_N(%)` ~ Rep, env.h)),
+  list(var = "pH",       site = "Hopland", model_type = "GLM (Gamma)", fit = glm(pH ~ Rep, env.h, family = Gamma(link = "log"))),
+  list(var = "CtoN",     site = "Hopland", model_type = "ANOVA", fit = aov(`CtoN` ~ Rep, env.h))
+)
+
+# Extract model summaries
+results <- lapply(models, function(m) {
+  fit <- m$fit
+  model_class <- class(fit)[1]
+
+  if (model_class == "aov") {
+    model_summary <- summary(fit)[[1]]  # ANOVA table
+    pval <- model_summary[["Pr(>F)"]][1]
+    df1 <- model_summary[["Df"]][1]
+    df2 <- model_summary[["Df"]][2]
+    stat <- model_summary[["F value"]][1]
+    stat_type <- "F"
+  } else if (model_class == "glm") {
+    model_summary <- summary(fit)
+    pval <- coef(model_summary)[2, 4]
+    df1 <- NA
+    df2 <- model_summary$df.residual
+    stat <- coef(model_summary)[2, 3]
+    stat_type <- "z"
+  } else {
+    pval <- df1 <- df2 <- stat <- stat_type <- NA
+  }
+
+  sig <- if (!is.na(pval) && pval < 0.05) "Yes" else "No"
+
+  # emmeans only if significant and ANOVA
+  emmeans_result <- tryCatch({
+    if (sig == "Yes" && model_class == "aov") {
+      em <- emmeans(fit, ~ Rep)
+      pairs_df <- as.data.frame(pairs(em))
+      pairs_df %>%
+        filter(p.value < 0.05) %>%
+        mutate(contrast = paste(contrast, round(p.value, 3), sep = ": p=")) %>%
+        pull(contrast) %>%
+        paste(collapse = "; ")
+    } else {
+      NA
+    }
+  }, error = function(e) NA)
+
+  data.frame(
+    Site = m$site,
+    Variable = m$var,
+    ModelType = m$model_type,
+    StatType = stat_type,
+    DF1 = df1,
+    DF2 = df2,
+    Statistic = round(stat, 3),
+    PValue = round(pval, 4),
+    Significant = sig,
+    Emmeans = emmeans_result,
+    stringsAsFactors = FALSE
+  )
+})
+
+summary_table <- do.call(rbind, results)
+
+# Save to CSV
+write.csv(summary_table, "env_model_summary_detailed.csv", row.names = FALSE)
+
+```
+
+
+
+##################################
+Temporal Environmental Distance Decay
+##################################
+
+#load function for tidying for plotting 
+```{r}
+tidy.dist <- function(dist.mat, dist.type = "DistanceUsed") {
+  dist.mat %>%
+    as.data.frame() %>%
+    mutate(SampleID.x = row.names(.)) %>%
+    gather(key = "SampleID.y", value = !!sym(dist.type), - SampleID.x)
+}
+```
+
+```{r}
+env.a <- read_csv('../../2412_metadataALL.csv') %>% filter(Site == 'Angelo') %>% select(SampleID,`GWC %`:pH) %>% mutate(sample = sub("^([^_]*)_.*$", "\\1", SampleID))
+
+env.a.2 <- env.a %>% select(-SampleID) %>% group_by(sample) %>% 
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+env.plots.tidy.a <- env.a.2 %>% gather(key = "Property", value = "Value", -sample) %>% 
+                  group_by(Property) %>% 
+                  mutate(zValue = (Value - mean(Value))/sd(Value)) %>% 
+                  select(sample, Property, zValue) %>% 
+                  spread(key = Property, value = zValue) %>% 
+                  as.data.frame() %>% column_to_rownames(var="sample") 
+
+env.h <- read_csv('../../2412_metadataALL.csv') %>% filter(Site == 'Hopland') %>% select(SampleID,`GWC %`:pH) %>% mutate(sample = sub("^([^_]*)_.*$", "\\1", SampleID))
+
+env.h.2 <- env.h %>% select(-SampleID) %>% group_by(sample) %>% 
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+env.plots.tidy.h <- env.h.2 %>% gather(key = "Property", value = "Value", -sample) %>% 
+                  group_by(Property) %>% 
+                  mutate(zValue = (Value - mean(Value))/sd(Value)) %>% 
+                  select(sample, Property, zValue) %>% 
+                  spread(key = Property, value = zValue) %>% 
+                  as.data.frame() %>% column_to_rownames(var="sample") 
+```
+
+```{r}
+angelo_env_dist <- as.matrix(vegdist(env.plots.tidy.a, method='euclidean')) %>% tidy.dist(., "EnvDist") %>% 
+  mutate(rep = substr(SampleID.x, 2, 2)) %>% mutate(time = substr(SampleID.x, 3, 4)) %>% mutate(Site = "Angelo")
+
+hopland_env_dist <- as.matrix(vegdist(env.plots.tidy.h, method='euclidean')) %>% tidy.dist(., "EnvDist")  %>% 
+  mutate(rep = substr(SampleID.x, 2, 2)) %>% mutate(time = substr(SampleID.x, 3, 4))  %>% mutate(Site = "Hopland")
+
+env.meta <- read_csv('../../2412_metadataALL.csv')
+
+angtime <- env.meta %>% filter(Site == "Angelo") %>% select(sample, days) %>% distinct(sample, .keep_all = TRUE) %>% column_to_rownames(var = 'sample')
+angelo_time_dist <- as.matrix(vegdist(angtime, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+
+hoptime <- env.meta %>% filter(Site == "Hopland") %>% select(sample, days) %>% distinct(sample, .keep_all = TRUE) %>% column_to_rownames(var = 'sample')
+hopland_time_dist <- as.matrix(vegdist(hoptime, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+
+
+angelo_dist <- angelo_env_dist %>% inner_join(angelo_time_dist, by = c("SampleID.x", "SampleID.y"))
+hopland_dist <- hopland_env_dist %>% inner_join(hopland_time_dist, by = c("SampleID.x", "SampleID.y"))
+
+combined_distance <- rbind(angelo_dist, hopland_dist)
+```
+
+
+```{r}
+(envtemporaldistdecay <- ggplot(combined_distance, aes(TemporalDist, EnvDist, fill = Site))  +
+           geom_smooth(data = subset(combined_distance, Site == "Angelo"), method = "loess", se = FALSE, formula = y ~ x, color = '#8FBCBBFF') +
+           geom_smooth(data = subset(combined_distance, Site == "Hopland"), method = "loess", se = FALSE, formula = y ~ x, color = '#81A1C1FF') +
+           geom_point(col = 'black', pch = 21) +
+           scale_fill_manual(values = c('#8FBCBBFF', '#81A1C1FF')) + theme_pubr() +
+           #stat_regline_equation(label.y = 6.2, label.x = 0.05, aes(label = ''), formula = y ~ x) +
+           stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "*`,`~")),label.y = 6.2, label.x = 0.05, size = 3, color = 'white') +
+           facet_wrap(~Site, scales ='free') + 
+           labs(x = 'Temporal Distance (days)', y = 'Environmental Dissimilarity of Z-Score \nTransformed Edaphic Properties (Euclidean)') + 
+           theme(axis.title = element_text(face = "bold"), legend.position = 'none'))
+
+(envtemporaldistdecay_lm <- ggplot(combined_distance, aes(TemporalDist, EnvDist, fill = Site))  +
+           geom_smooth(data = subset(combined_distance, Site == "Angelo"), method = "lm", se = FALSE, formula = y ~ x, color = '#8FBCBBFF') +
+           geom_smooth(data = subset(combined_distance, Site == "Hopland"), method = "lm", se = FALSE, formula = y ~ x, color = '#81A1C1FF') +
+           geom_point(col = 'black', pch = 21) +
+           scale_fill_manual(values = c('#8FBCBBFF', '#81A1C1FF')) + theme_pubr() +
+           stat_regline_equation(label.y = 6.2, label.x = 0.05, aes(label = ..eq.label..), formula = y ~ x) +
+           stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "*`,`~")),label.y = 6, label.x = 0.05, size = 3) +
+           facet_wrap(~Site, scales ='free') + 
+           labs(x = 'Temporal Distance (days)', y = 'Environmental Dissimilarity of Z-Score \nTransformed Edaphic Properties (Euclidean)') + 
+           theme(axis.title = element_text(face = "bold"), legend.position = 'none'))
+
+envplots <- plot_grid(envtemporaldistdecay_lm, envtemporaldistdecay, ncol = 2, labels = c("A", "B"))
+
+ggsave('EnvironTemporalDistanceDecay.png', envplots, width = 10, height = 5.5)
+```
+
+```{r}
+env.a <- read_csv('../../2412_metadataALL.csv') %>% filter(Site == 'Angelo') %>% select(SampleID,`GWC %`:pH) %>% mutate(sample = sub("^([^_]*)_.*$", "\\1", SampleID))
+
+env.a.2 <- env.a %>% select(-SampleID) %>% group_by(sample) %>% 
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+colnames(env.a.2)
+
+env_long_a <- env.a.2  %>%
+  pivot_longer(cols = -sample, names_to = "variable", values_to = "value")
+
+# Do pairwise comparisons
+pairwise_diffs_a <- env_long_a  %>%
+  rename(SampleID.x = sample, value1 = value) %>%
+  crossing(env_long_a %>% rename(SampleID.y = sample, value2 = value, variable2 = variable)) %>%
+  filter(variable == variable2) %>%   # Match on variable
+  filter(SampleID.x != SampleID.y) %>%      # Remove self comparisons
+  mutate(diff = abs(value2 - value1)) %>%
+  select(variable, SampleID.x, SampleID.y, diff)
+
+env.meta <- read_csv('../../2412_metadataALL.csv')
+
+angtime <- env.meta %>% filter(Site == "Angelo") %>% select(sample, days) %>% distinct(sample, .keep_all = TRUE) %>% column_to_rownames(var = 'sample')
+angelo_time_dist <- as.matrix(vegdist(angtime, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+
+angelo_dist2 <- pairwise_diffs_a %>% inner_join(angelo_time_dist, by = c("SampleID.x", "SampleID.y"))
+
+ggplot(angelo_dist2, aes(x = TemporalDist, y = diff)) + geom_point() + facet_wrap(~variable, scales = "free")
+
+labels_ang <- data.frame(
+  variable = c("GWC %", "pH", "Total_C(%)", "Total_N(%)"),
+  x = 0,
+  y = c(6.5, 0.4, 1.25, 0.08),
+  label = c(
+    "R² = 0.0084, p = 0.16",
+    "R² = 0.38, p < 2.2e-16",
+    "R² = 0.0016, p = 0.54",
+    "R² = 0.0007, p = 0.68"
+  )
+)
+
+(angplotslm <- ggplot(angelo_dist2, aes(x = TemporalDist, y = diff)) + geom_point(aes(fill = variable), pch = 21, color = "black", show.legend = FALSE) + facet_wrap(~variable, scales = "free") + geom_smooth(data = angelo_dist2, method = "lm", se = FALSE, formula = y ~ x, color = 'darkslategray') +  
+    #scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +
+    #stat_regline_equation(aes(label = ..eq.label..), formula = y ~ x, label.y.npc="top", label.x.npc = "left") +  
+    geom_text(data = labels_ang, aes(x = x, y = y, label = label), inherit.aes = FALSE, hjust = 0, size = 3.5) +
+    labs(title = "Angelo", y = "Absolute Difference", x = "Temporal Distance (days)") +
+  #stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "*`,`~")),  label.y.npc="top", label.x.npc = "left", size = 3) + 
+    scale_fill_manual(values = c('#8FBCBBFF', '#81A1C1FF', "coral", "plum")) + theme_pubr() ) 
+
+# angelo_env_gwc <- env.a.2 %>% select(sample, `pH`) %>% column_to_rownames(var = 'sample') 
+# 
+# ang.env.dist.gwc <- as.matrix(vegdist(angelo_env_gwc, method='manhattan')) %>% tidy.dist(., "EnvDist") %>% 
+#   mutate(rep = substr(SampleID.x, 2, 2)) %>% mutate(time = substr(SampleID.x, 3, 4)) %>% mutate(Site = "Angelo")
+# 
+# angelo_dist.gwc <- ang.env.dist.gwc  %>% inner_join(angelo_time_dist, by = c("SampleID.x", "SampleID.y"))
+# 
+# ggplot(angelo_dist.gwc, aes(x = TemporalDist, y = EnvDist)) + geom_point() 
+
+
+env.h <- read_csv('../../2412_metadataALL.csv') %>% filter(Site == 'Hopland') %>% select(SampleID,`GWC %`:pH) %>% mutate(sample = sub("^([^_]*)_.*$", "\\1", SampleID))
+
+env.h.2 <- env.h %>% select(-SampleID) %>% group_by(sample) %>% 
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+env_long_h <- env.h.2  %>%
+  pivot_longer(cols = -sample, names_to = "variable", values_to = "value")
+
+# Do pairwise comparisons
+pairwise_diffs_h <- env_long_h  %>%
+  rename(SampleID.x = sample, value1 = value) %>%
+  crossing(env_long_h %>% rename(SampleID.y = sample, value2 = value, variable2 = variable)) %>%
+  filter(variable == variable2) %>%   # Match on variable
+  filter(SampleID.x != SampleID.y) %>%      # Remove self comparisons
+  mutate(diff = abs(value2 - value1)) %>%
+  select(variable, SampleID.x, SampleID.y, diff)
+
+env.meta <- read_csv('../../2412_metadataALL.csv')
+
+hoptime <- env.meta %>% filter(Site == "Hopland") %>% select(sample, days) %>% distinct(sample, .keep_all = TRUE) %>% column_to_rownames(var = 'sample')
+hopland_time_dist <- as.matrix(vegdist(hoptime, method = 'manhattan')) %>% tidy.dist(., "TemporalDist")
+
+hopland_dist2 <- pairwise_diffs_h %>% inner_join(hopland_time_dist, by = c("SampleID.x", "SampleID.y"))
+
+labels_hop <- data.frame(
+  variable = c("GWC %", "pH", "Total_C(%)", "Total_N(%)"),
+  x = 0,
+  y = c(12.5, 0.4, 1.35, 0.11),
+  label = c(
+    "R² = 0.45, p < 2.2e-16",
+    "R² = 0.67, p < 2.2e-16",
+    "R² = 0.006, p = 0.26",
+    "R² = 0.024, p = 0.026"
+  )
+)
+
+(hopplotslm <- ggplot(hopland_dist2, aes(x = TemporalDist, y = diff)) + geom_point(aes(fill = variable), pch = 21, color = "black", show.legend = FALSE) + facet_wrap(~variable, scales = "free") + geom_smooth(data = hopland_dist2, method = "lm", se = FALSE, formula = y ~ x, color = 'darkslategray') +   #stat_regline_equation(aes(label = ..eq.label..), formula = y ~ x, label.y.npc="top", label.x.npc = "left") + 
+    labs(title = "Hopland", y = "Absolute Difference", x = "Temporal Distance (days)") +
+  #stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "*`,`~")), label.y.npc = 0.8, label.x.npc = 0.1, size = 3) +
+    geom_text(data = labels_hop, aes(x = x, y = y, label = label), inherit.aes = FALSE, hjust = 0, size = 3.5) +
+           scale_fill_manual(values = c('#8FBCBBFF', '#81A1C1FF', "coral", "plum")) + 
+    #scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) + 
+    theme_pubr() )
+
+hopplotsloess <- ggplot(hopland_dist2, aes(x = TemporalDist, y = diff)) + geom_point() + facet_wrap(~variable, scales = "free") + geom_smooth(data = hopland_dist2, method = "loess", se = FALSE, formula = y ~ x, color = 'darkslategray') 
+
+
+
+# 
+# 
+# pairwise_dists_h <- env_long_h %>%
+#   rename(SampleID.x = sample, value1 = value) %>%
+#   crossing(env_long_h %>% rename(SampleID.y = sample, value2 = value, variable2 = variable)) %>%
+#   filter(variable == variable2) %>%     # Match on variable
+#   filter(SampleID.x != SampleID.y) %>%  # Remove self-comparisons
+#   mutate(euclidean_dist = sqrt((value2 - value1)^2)) %>%
+#   select(variable, SampleID.x, SampleID.y, euclidean_dist)
+
+env_long_a2 <- env_long_a %>% mutate(time = substr(sample, 3, 4))
+
+
+
+ggplot(env_long_a2, aes(x = as.numeric(as.character(time)), y = value)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, formula = y ~ x, color = 'darkslategray') +
+  facet_wrap(~variable, scales = "free") +
+  #stat_regline_equation(aes(label = ..eq.label..), formula = y ~ x) +
+  #stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "*`,`~")), label.y.npc = 0.92, size = 3) +
+  scale_x_continuous(
+    breaks = c(1, 2, 3, 4, 6, 10),
+    labels = c("1", "2", "3", "4", "6", "10")
+  ) +
+  xlab("Time")
+
+env_long_h2 <- env_long_h %>% mutate(time = substr(sample, 3, 4))
+
+ggplot(env_long_h2, aes(x = as.numeric(as.character(time)), y = value)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, formula = y ~ x, color = 'darkslategray') +
+  facet_wrap(~variable, scales = "free") +
+  stat_regline_equation(aes(label = ..eq.label..), formula = y ~ x) +
+  stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "*`,`~")), label.y.npc = 0.92, size = 3) +
+  scale_x_continuous(
+    breaks = c(1, 2, 3, 4, 6, 10),
+    labels = c("1", "2", "3", "4", "6", "10")
+  ) +
+  xlab("Time")
+
+hopplotslm
+angplotslm
+
+together <- plot_grid(angplotslm, hopplotslm, ncol = 2, labels = c("C", "D"))
+(total <- plot_grid(envplots, together, ncol = 1))
+
+ggsave('EnvironTemporalDistanceDecaywithindividualvariables.png', total, height = 10, width = 10)
+
+ggsave('EnvironTemporalDistanceDecaywithindividualvariables.svg', dev = "svg", total, height = 10, width = 10)
+```
+
+
+#####################
+Metagenome comparison
+#####################
+
+
+```{r}
+dfenv <- read.csv("../../2503_Metadatafinal_metagenomes.csv")
+dfenva <- dfenv %>% select(pH:`Total_N...`, Site:Depth) %>% filter(Site == "A") %>% filter(Time %in% c(3,4,5,7,9)) %>% filter(Depth %in% c(1,3,5))
+dfenvh <- dfenv %>% select(pH:`Total_N...`, Site:Depth) %>% filter(Site == "H") %>% filter(Time %in% c(3,4,5,7,9)) %>% filter(Depth %in% c(1,3,5))
+
+dfenvlong <- dfenv %>% select(pH:`Total_N...`, Site:Depth) %>% pivot_longer(-c(Site:Depth), values_to = "Measurement_Value", names_to = "Measurement")
+
+dfenvlonga <- dfenvlong %>% filter(Site == "A") %>% filter(Time %in% c(3,4,5,7,9)) %>% filter(Depth %in% c(1,3,5)) %>% 
+  mutate(Depth2 = case_when(Depth == "1" ~ "0-10 cm",
+                            Depth == "3" ~ "20-30 cm",
+                            Depth == "5" ~ "50-80 cm"))
+dfenvlongh <- dfenvlong %>% filter(Site == "H") %>% filter(Time %in% c(3,4,5,8,9)) %>% filter(Depth %in% c(1,3,5)) %>% 
+  mutate(Depth2 = case_when(Depth == "1" ~ "0-10 cm",
+                            Depth == "3" ~ "20-30 cm",
+                            Depth == "5" ~ "50-80 cm"))
+```
+
+#stats
+```{r}
+ph.model.ang <- lm(pH ~ Depth * Time * Rep, data = dfenva)
+shapiro.test(residuals(ph.model.ang)) #not significant - good to proceed
+summary(aov(ph.model.ang)) #pH sig corr w. depth and rep, plus depth and rep have an interaction effect
+TukeyHSD(aov(ph.model.ang), "Depth:Rep")
+
+gwc.model.ang <- lm(`GWC..` ~ Depth * Time * Rep, data = dfenva)
+shapiro.test(residuals(gwc.model.ang)) #barely significant
+plot(gwc.model.ang) #plots look fine so going to proceed w/ lm model
+summary(aov(gwc.model.ang)) #GWC significantly correlated w/time
+
+totc.model.ang <- lm(`Total_C...` ~ Depth * Time * Rep, data = dfenva)
+shapiro.test(residuals(totc.model.ang)) #significant .. need to use a different model
+tot.c.model.glm <- glm(`Total_C...` ~ Depth * Time * Rep, data = dfenva, family = Gamma(link = "log"))
+anova(tot.c.model.glm, test = "Chisq") #Tot C sig correlated w/depth
+emmeans(tot.c.model.glm, pairwise ~ Depth) #all depths significantly different
+
+totn.model.ang <- lm(`Total_N...` ~ Depth * Time * Rep, data = dfenva)
+shapiro.test(residuals(totn.model.ang))
+summary(aov(totn.model.ang)) #Tot N sig correlated w/depth
+emmeans(totn.model.ang, pairwise ~ Depth) #all depths significantly different
+
+ph.model.hop <- lm(pH ~ Depth * Time * Rep, data = dfenvh)
+shapiro.test(residuals(ph.model.hop))
+summary(aov(ph.model.hop)) #pH sig corr w. depth and rep, plus depth and rep have an interaction effect
+
+gwc.model.hop <- lm(`GWC..` ~ Depth * Time * Rep, data = dfenvh)
+shapiro.test(residuals(gwc.model.hop))
+summary(aov(gwc.model.hop)) #no significance
+
+totc.model.hop <- lm(`Total_C...` ~ Depth * Time * Rep, data = dfenvh)
+shapiro.test(residuals(totc.model.hop))
+plot(totc.model.hop)
+tot.c.model.glm.hop <- glm(`Total_C...` ~ Depth * Time * Rep, data = dfenvh, family = Gamma(link = "log"))
+anova(tot.c.model.glm.hop, test = "Chisq") #Tot C sig correlated w/depth
+emmeans(tot.c.model.glm.hop, pairwise ~ Depth) #all depths significantly different
+
+totn.model.hop <- lm(`Total_N...` ~ Depth * Time * Rep, data = dfenvh)
+shapiro.test(residuals(totn.model.hop)) #very significant - proceeding w/glm
+totn.model.glm.hop <- glm(`Total_N...` ~ Depth * Time * Rep, data = dfenvh, family = Gamma(link = "log"))
+anova(totn.model.glm.hop, test = "Chisq") #Tot N sig correlated w/depth
+emmeans(totn.model.glm.hop, pairwise ~ Depth) #all depths significantly diff
+```
+
+#prepping for supp table
+
+```{r}
+# Summarizing function with robust column handling
+summarize_model <- function(model, type, name) {
+  if (type == "LM") {
+    aov_table <- tidy(aov(model))
+    data.frame(
+      Model = name,
+      Term = aov_table$term,
+      Test = "F",
+      Df = aov_table$df,
+      Residual_Df = df.residual(model),
+      Statistic = round(aov_table$statistic, 3),
+      PValue = round(aov_table$p.value, 4),
+      Significant = ifelse(aov_table$p.value < 0.05, "Yes", "No"),
+      stringsAsFactors = FALSE
+    )
+  } else if (type == "GLM") {
+    aov_table <- suppressWarnings(tidy(anova(model, test = "Chisq")))
+    
+    # Identify statistic column
+    stat_col <- if ("statistic" %in% names(aov_table)) {
+      aov_table$statistic
+    } else if ("Chisq" %in% names(aov_table)) {
+      aov_table$Chisq
+    } else {
+      rep(NA, nrow(aov_table))
+    }
+
+    # Identify p-value column
+    pval_col <- if ("p.value" %in% names(aov_table)) {
+      aov_table$p.value
+    } else if ("Pr(>Chi)" %in% names(aov_table)) {
+      aov_table[["Pr(>Chi)"]]
+    } else {
+      rep(NA, nrow(aov_table))
+    }
+
+    data.frame(
+      Model = name,
+      Term = if ("term" %in% names(aov_table)) aov_table$term else rownames(aov_table),
+      Test = "Chisq",
+      Df = if ("df" %in% names(aov_table)) aov_table$df else NA,
+      Residual_Df = model$df.residual,
+      Statistic = round(stat_col, 3),
+      PValue = round(pval_col, 4),
+      Significant = ifelse(!is.na(pval_col) & pval_col < 0.05, "Yes", "No"),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    stop("Unknown model type")
+  }
+}
+
+# Example model list
+model_list <- list(
+  list(name = "pH (Angelo)", model = lm(pH ~ Depth * Time * Rep, data = dfenva), type = "LM"),
+  list(name = "GWC (Angelo)", model = lm(`GWC..` ~ Depth * Time * Rep, data = dfenva), type = "LM"),
+  list(name = "Total C (Angelo)", model = glm(`Total_C...` ~ Depth * Time * Rep, data = dfenva, family = Gamma(link = "log")), type = "GLM"),
+  list(name = "Total N (Angelo)", model = lm(`Total_N...` ~ Depth * Time * Rep, data = dfenva), type = "LM"),
+  list(name = "pH (Hopland)", model = lm(pH ~ Depth * Time * Rep, data = dfenvh), type = "LM"),
+  list(name = "GWC (Hopland)", model = lm(`GWC..` ~ Depth * Time * Rep, data = dfenvh), type = "LM"),
+  list(name = "Total C (Hopland)", model = glm(`Total_C...` ~ Depth * Time * Rep, data = dfenvh, family = Gamma(link = "log")), type = "GLM"),
+  list(name = "Total N (Hopland)", model = glm(`Total_N...` ~ Depth * Time * Rep, data = dfenvh, family = Gamma(link = "log")), type = "GLM")
+)
+
+# Build the summary table
+summary_all <- bind_rows(lapply(model_list, function(m) {
+  summarize_model(m$model, m$type, m$name)
+}))
+
+# Post hoc test for Depth
+posthoc_list <- list()
+
+for (m in model_list) {
+  fit <- m$model
+  name <- m$name
+  type <- m$type
+  terms_present <- attr(terms(fit), "term.labels")
+
+  if ("Depth" %in% terms_present) {
+    try({
+      em <- emmeans(fit, ~ Depth)
+      pairs_df <- as.data.frame(pairs(em))
+      sig_pairs <- pairs_df %>%
+        filter(p.value < 0.05) %>%
+        mutate(contrast = paste(contrast, ": p=", round(p.value, 3), sep = ""))
+      posthoc_list[[name]] <- paste(sig_pairs$contrast, collapse = "; ")
+    }, silent = TRUE)
+  }
+}
+
+# Merge post hoc results
+summary_all$PostHoc <- unlist(posthoc_list[summary_all$Model])
+summary_all$PostHoc[is.na(summary_all$PostHoc)] <- "NA"
+
+# View output
+summary_all
+
+summary_all %>% filter(Term == "Time")
+
+# Save to CSV
+write.csv(summary_all, "depth_time_rep_models_summary.csv", row.names = FALSE)
+
+```
+
+#get stats for plotting
+```{r}
+all_comparisons_depth <- combn(as.character(c(1,3,5)), 2, simplify = FALSE)
+all_comparisons_rep <- combn(c("A", "B", "C"), 2, simplify = FALSE)
+all_comparisons_time <- combn(as.character(3:9), 2, simplify = FALSE)
+
+(ang_results_depth <- compare_means(
+  Measurement_Value ~ Depth,
+  data = dfenvlonga,
+  group.by = "Measurement",
+  method = "wilcox.test",
+  p.adjust.method = "bonferroni",  
+  comparisons = all_comparisons_depth
+))
+
+(ang_results_rep <- compare_means(
+  Measurement_Value ~ Rep,
+  data = dfenvlonga,
+  group.by = "Measurement",
+  method = "wilcox.test",
+  p.adjust.method = "bonferroni",  
+  comparisons = all_comparisons_rep
+))
+
+(ang_results_time <- compare_means(
+  Measurement_Value ~ Time,
+  data = dfenvlonga,
+  group.by = "Measurement",
+  method = "wilcox.test",
+  p.adjust.method = "bonferroni",  
+  comparisons = all_comparisons_time
+))
+
+(hop_results_depth <- compare_means(
+  Measurement_Value ~ Depth,
+  data = dfenvlongh,
+  group.by = "Measurement",
+  method = "wilcox.test",
+  p.adjust.method = "bonferroni",  
+  comparisons = all_comparisons_depth
+))
+
+(hop_results_rep <- compare_means(
+  Measurement_Value ~ Rep,
+  data = dfenvlongh,
+  group.by = "Measurement",
+  method = "wilcox.test",
+  p.adjust.method = "bonferroni",  
+  comparisons = all_comparisons_rep
+))
+
+(hop_results_time <- compare_means(
+  Measurement_Value ~ Time,
+  data = dfenvlongh,
+  group.by = "Measurement",
+  method = "wilcox.test",
+  p.adjust.method = "bonferroni",  
+  comparisons = all_comparisons_time
+))
+```
+
+
+#plotting
+```{r}
+totalc_annot_ang_depth <- tibble::tibble(
+  Measurement = "Total_C...",
+  x = c(2, 1.5, 2.5),
+  xstart = c(1, 1, 2),
+  xend = c(3, 2, 3),
+  y = c(4.2, 4.5, 4.8),
+  label = c("***", "***", "****")
+)
+
+totaln_annot_ang_depth <- tibble::tibble(
+  Measurement = "Total_N...",
+  x = c(2, 1.5, 2.5),
+  xstart = c(1, 1, 2),
+  xend = c(3, 2, 3),
+  y = c(0.3, 0.32, 0.35),
+  label = c("****", "****", "****")
+)
+
+depthsigang <- rbind(totalc_annot_ang_depth, totaln_annot_ang_depth)
+
+(angenvdepthplot <- ggplot(dfenvlonga, aes(x = Depth2, y = Measurement_Value, fill = Depth2)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_fill_manual(values = c("gray90","burlywood", "burlywood4")) +
+  labs(title = "Angelo Depth", y = "Measurement Value", x = "Depth") +
+    geom_segment(data = depthsigang, aes(x = xstart, xend = xend, y = y, yend = y), inherit.aes = FALSE) +
+  geom_text(data = depthsigang, aes(x = x, y = y + 0.005, label = label), size = 5, inherit.aes = FALSE) +
+  facet_wrap(~Measurement, scales = "free", labeller = labeller(Measurement = c("GWC.." = "GWC (%)", 
+                                                             "Total_C..." = "Total C (%)", 
+                                                             "Total_N..." = "Total N (%)"))))
+pH_annot_ang_rep <- tibble::tibble(
+  Measurement = "pH",
+  x = c(2, 1.5, 2.5),
+  xstart = c(1, 1, 2),
+  xend = c(3, 2, 3),
+  y = c(5, 4.95, 4.9),
+  label = c("***", "*", "***")
+)
+
+# Rep comparisons (A,B,C) for Angelo w/ stats
+(angenvrepplot <- ggplot(dfenvlonga, aes(x = Rep, y = Measurement_Value, fill = Rep)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_fill_manual(values = c('mediumseagreen', 'azure2','darkcyan')) +
+  labs(title = "Angelo Sampling Zone", y = "Measurement Value", x = "Sampling Zone") +
+    geom_segment(data = pH_annot_ang_rep, aes(x = xstart, xend = xend, y = y, yend = y), inherit.aes = FALSE) +
+    geom_text(data = pH_annot_ang_rep, aes(x = x, y = y + 0.005, label = label), size = 5, inherit.aes = FALSE) +
+  facet_wrap(~Measurement, scales = "free", labeller = labeller(Measurement = c("GWC.." = "GWC (%)", 
+                                                             "Total_C..." = "Total C (%)", 
+                                                             "Total_N..." = "Total N (%)"))))
+
+gwc_annot_ang <- tibble::tibble(
+  Measurement = "GWC..",
+  x = c(2, 2.5, 2.5, 3, 3.5),
+  xstart = c(1, 1, 2, 2, 3),
+  xend = c(3, 4, 3, 4, 4),
+  y = c(28, 32, 36, 40, 44),
+  label = c("***", "****", "****", "****", "***")
+)
+
+(angenvtimeplot <- ggplot(dfenvlonga, aes(x = as.factor(Time), y = Measurement_Value, fill = as.factor(Time))) +
+  geom_boxplot(show.legend = FALSE) +
+  labs(title = "Angelo Sampling Date", y = "Measurement Value", x = "Sampling Date") +
+  geom_segment(data = gwc_annot_ang, aes(x = xstart, xend = xend, y = y, yend = y), inherit.aes = FALSE) +
+  geom_text(data = gwc_annot_ang, aes(x = x, y = y + 0.5, label = label), size = 5, inherit.aes = FALSE) +
+    scale_x_discrete(labels = c(
+  "1" = "3/19",
+  "2" = "4/7",
+  "3" = "4/29",
+  "4" = "5/21",
+  "5" = "6/1",
+  "6" = "6/15",
+  "7" = "7/13",
+  "8" = "9/21",
+  "9" = "9/21"
+)) +
+  facet_wrap(~Measurement, scales = "free", labeller = labeller(Measurement = c("GWC.." = "GWC (%)", 
+                                                             "Total_C..." = "Total C (%)", 
+                                                             "Total_N..." = "Total N (%)"))))
+
+
+###HOPLANDIAAAAA##### - sorry I am losing it over these plots
+
+# pH 1-3 *
+# pH 1-5 ****
+# pH 3-5 ***
+
+pH_annot_hop_depth <- tibble::tibble(
+  Measurement = "pH",
+  x = c(2, 1.5, 2.5),
+  xstart = c(1, 1, 2),
+  xend = c(3, 2, 3),
+  y = c(5.9, 5.7, 5.5),
+  label = c("****", "*", "***")
+)
+
+totalc_annot_hop_depth <- tibble::tibble(
+  Measurement = "Total_C...",
+  x = c(2, 1.5, 2.5),
+  xstart = c(1, 1, 2),
+  xend = c(3, 2, 3),
+  y = c(4.8, 4.5, 4.2),
+  label = c("****", "****", "****")
+)
+
+totaln_annot_hop_depth <- tibble::tibble(
+  Measurement = "Total_N...",
+  x = c(2, 1.5, 2.5),
+  xstart = c(1, 1, 2),
+  xend = c(3, 2, 3),
+  y = c(0.4, 0.35, 0.30),
+  label = c("****", "****", "****")
+)
+
+depthsighop <- rbind(pH_annot_hop_depth, totalc_annot_hop_depth, totaln_annot_hop_depth)
+
+# Depth comparisons for Hopland
+(hopenvdepthplot <- ggplot(dfenvlongh, aes(x = Depth2, y = Measurement_Value, fill = Depth2)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_fill_manual(values = c("gray90","burlywood", "burlywood4")) +
+  labs(title = "Hopland Depth", y = "Measurement Value", x = "Depth") +
+  geom_segment(data = depthsighop, aes(x = xstart, xend = xend, y = y, yend = y), inherit.aes = FALSE) +
+  geom_text(data = depthsighop, aes(x = x, y = y + 0.01, label = label), size = 5, inherit.aes = FALSE) +
+  facet_wrap(~Measurement, scales = "free", labeller = labeller(Measurement = c("GWC.." = "GWC (%)", 
+                                                             "Total_C..." = "Total C (%)", 
+                                                             "Total_N..." = "Total N (%)"))))
+
+# Rep comparisons for Hopland
+pH_annot_hop_rep <- tibble::tibble(
+  Measurement = "pH",
+  x = c(1.5),
+  xstart = c(1),
+  xend = c( 2),
+  y = c(5.4),
+  label = c("*")
+)
+
+(hopenvrepplot <- ggplot(dfenvlongh, aes(x = Rep, y = Measurement_Value, fill = Rep)) +
+  geom_boxplot(show.legend = FALSE) +
+    scale_fill_manual(values = c('mediumseagreen', 'azure2','darkcyan')) +
+  labs(title = "Hopland Sampling Zone", y = "Measurement Value", x = "Sampling Zone") +
+  geom_segment(data = pH_annot_hop_rep, aes(x = xstart, xend = xend, y = y, yend = y), inherit.aes = FALSE) +
+    geom_text(data = pH_annot_hop_rep, aes(x = x, y = y + 0.01, label = label), size = 5, inherit.aes = FALSE) +
+  facet_wrap(~Measurement, scales = "free", labeller = labeller(Measurement = c("GWC.." = "GWC (%)", 
+                                                             "Total_C..." = "Total C (%)", 
+                                                             "Total_N..." = "Total N (%)"))))
+
+gwc_annot_hop <- tibble::tibble(
+  Measurement = "GWC..",
+  x = c(2, 2.5, 2.5, 4),
+  xstart = c(1, 1, 2, 3),
+  xend = c(3, 4, 3, 5),
+  y = c(20, 24, 28, 32),
+  label = c("***", "**", "***", "**")
+)
+
+
+(hopenvtimeplot <- ggplot(dfenvlongh, aes(x = as.factor(Time), y = Measurement_Value, fill = as.factor(Time))) +
+  geom_boxplot(show.legend = FALSE) +
+  labs(title = "Hopland Sampling Date", y = "Measurement Value", x = "Sampling Date") +
+    scale_x_discrete(labels = c(
+  "1" = "3/19",
+  "2" = "4/7",
+  "3" = "4/29",
+  "4" = "5/21",
+  "5" = "6/1",
+  "6" = "6/15",
+  "7" = "7/13",
+  "8" = "9/21",
+  "9" = "9/21"
+)) +
+    geom_segment(data = gwc_annot_hop, aes(x = xstart, xend = xend, y = y, yend = y), inherit.aes = FALSE) +
+  geom_text(data = gwc_annot_hop, aes(x = x, y = y + 0.5, label = label), size = 5, inherit.aes = FALSE) +
+  facet_wrap(~Measurement, scales = "free", labeller = labeller(Measurement = c("GWC.." = "GWC (%)", 
+                                                             "Total_C..." = "Total C (%)", 
+                                                             "Total_N..." = "Total N (%)"))))
+
+
+(envtogether <- plot_grid(angenvdepthplot, angenvrepplot, angenvtimeplot, hopenvdepthplot, hopenvrepplot, hopenvtimeplot, labels = c("A", "B", "C", "D","E", "F"), ncol = 3))
+
+ggsave("SoilEnvironmentMetagenomes.png", envtogether, width = 19, height = 13)
+
+```

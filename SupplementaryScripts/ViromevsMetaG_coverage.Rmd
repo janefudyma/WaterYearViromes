@@ -1,0 +1,326 @@
+---
+title: "Virome vs Metagenome Coverage Script"
+output: html_document
+date: "2025-04-23"
+---
+
+```{r}
+# Define the filenames based on the pattern
+file_prefix <- "../../2502.allWY.mg.covm."
+file_suffix <- ".mean.tsv"
+coverage_levels <- seq(0, 75, by = 5)  # Generate 0, 5, 10, ..., 75
+
+# Columns to keep
+columns_to_keep <- c(
+  "WaterYear_AA3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AB3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AC3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AA4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AB4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AC4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HA3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HB3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HC3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HA4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HB4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HC4_D1_t0_mapped.sort.90filt.Mean"
+)
+
+# Loop through each coverage level
+for (cov in coverage_levels) {
+  # Construct the file name
+  file_name <- paste0(file_prefix, cov, file_suffix)
+  
+  # Read the file
+  df <- read.csv(file_name, sep = "\t") %>% column_to_rownames("Contig")
+  
+  # Keep only the required columns that exist in the file
+  df_filtered <- df %>% select(!!columns_to_keep)  # Keep only matching columns
+  
+  # Remove rows where the row sum is 0
+  df_filtered <- df_filtered[rowSums(df_filtered) > 0, ]
+  
+  # Assign filtered data frame to a uniquely named variable in the global environment
+  assign(paste0("df_", cov), df_filtered, envir = .GlobalEnv)
+}
+
+# Now, each table is an individual variable named like df_0, df_5, df_10, ..., df_75
+```
+
+```{r}
+# Define the filenames based on the pattern
+file_prefix <- "../../2502.allWY.mg.covm."
+file_suffix <- ".mean.tsv"
+coverage_levels <- seq(0, 75, by = 5)  # Generate 0, 5, 10, ..., 75
+
+# Columns to keep
+columns_to_keep <- c(
+  "WaterYear_AA3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AB3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AC3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AA4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AB4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_AC4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HA3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HB3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HC3_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HA4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HB4_D1_t0_mapped.sort.90filt.Mean",
+  "WaterYear_HC4_D1_t0_mapped.sort.90filt.Mean"
+)
+
+# List to store dataframes
+df_list <- list()
+
+# Loop through each coverage level
+for (cov in coverage_levels) {
+  # Construct the file name
+  file_name <- paste0(file_prefix, cov, file_suffix)
+  
+  # Read the file
+  df <- read.csv(file_name, sep = "\t") %>% column_to_rownames("Contig")
+  
+  # Keep only the required columns that exist in the file
+  df_filtered <- df %>% select(!!columns_to_keep)  # Keep only matching columns
+  
+  # Rename the columns by appending the coverage level
+  colnames(df_filtered) <- paste0(colnames(df_filtered), "_", cov)
+  
+  # Store the filtered dataframe in the list
+  df_list[[paste0("df_", cov)]] <- df_filtered
+}
+
+# Now we will combine all dataframes in df_list by row names (column bind)
+
+# Start with the first dataframe
+final_df <- df_list[[1]]
+
+# Loop through the rest of the dataframes
+for (i in 2:length(df_list)) {
+  # Combine using row names
+  final_df <- merge(final_df, df_list[[i]], by = "row.names", all = TRUE)
+  final_df <- final_df %>% column_to_rownames("Row.names")
+}
+
+# Replace NAs with 0s in the final dataframe
+final_df[is.na(final_df)] <- 0
+
+# The final dataframe is now ready
+assign("final_coverage_df", final_df, envir = .GlobalEnv)
+
+# If you want to save it
+# write.csv(final_df, "final_coverage_df.csv")
+
+final_df
+```
+```{r}
+votu <- read.csv("../../2501_normalizedabundancetable_averagedacrossrep_withsingletonskinda.csv") %>% 
+  column_to_rownames(var = '...1') %>% select(AA3, AA4, AB3, AB4, AC3, AC4, HA3, HA4, HB3, HB4, HC3, HC4) %>% 
+  rename_with(~ paste0(. , "_vir"))
+
+
+merged_df <- merge(final_df, votu, by = "row.names", all = TRUE)
+merged_df <- merged_df %>% column_to_rownames("Row.names")
+merged_df[is.na(merged_df)] <- 0
+
+
+#colnames(merged_df) <- gsub("^(WaterYear_[^_]+).*(_[^_]+$)", "\\1\\2", colnames(merged_df))
+
+merg2 <- merged_df %>% 
+  rename_with(~ gsub("^WaterYear_([^_]+)_.*(_[0-9]+$)", "\\1\\2", .), 
+              starts_with("WaterYear"))
+```
+
+
+```{r}
+#function to tidy dfs for plotting
+tidy.dist <- function(dist.mat, dist.type = "DistanceUsed") {
+  dist.mat %>%
+    as.data.frame() %>%
+    mutate(SampleID.x = row.names(.)) %>%
+    gather(key = "SampleID.y", value = !!sym(dist.type), - SampleID.x)
+}
+
+#function for microbial otu tables (hellinger and bray)
+bray.xform.dist <- function(otu.in) {
+  data_t <- t(otu.in)
+  data_xform <- decostand(data_t, method = 'hellinger')
+  data_dist <- as.matrix(vegdist(data_xform, method = 'bray'))
+}
+```
+
+```{r}
+dfAA3 <- merg2 %>% select(starts_with("AA3"))
+dfAA4 <- merg2 %>% select(starts_with("AA4"))
+dfAB3 <- merg2 %>% select(starts_with("AB3"))
+dfAB4 <- merg2 %>% select(starts_with("AB4"))
+dfAC3 <- merg2 %>% select(starts_with("AC3"))
+dfAC4 <- merg2 %>% select(starts_with("AC4"))
+
+
+tidy.AA3 <- tidy.dist(bray.xform.dist(dfAA3), "BrayDist") %>% filter(SampleID.y == "AA3_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "AA3")
+
+tidy.AB3 <- tidy.dist(bray.xform.dist(dfAB3), "BrayDist") %>% filter(SampleID.y == "AB3_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "AB3")
+
+tidy.AC3 <- tidy.dist(bray.xform.dist(dfAC3), "BrayDist") %>% filter(SampleID.y == "AC3_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "AC3")
+
+tidy.AA4 <- tidy.dist(bray.xform.dist(dfAA4), "BrayDist") %>% filter(SampleID.y == "AA4_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "AA4")
+
+tidy.AB4 <- tidy.dist(bray.xform.dist(dfAB4), "BrayDist") %>% filter(SampleID.y == "AB4_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "AB4")
+
+tidy.AC4 <- tidy.dist(bray.xform.dist(dfAC4), "BrayDist") %>% filter(SampleID.y == "AC4_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "AC4")
+
+tidyang <- rbind(tidy.AA3, tidy.AA4, tidy.AB3, tidy.AB4, tidy.AC3, tidy.AC4)
+```
+
+```{r}
+dfHA3 <- merg2 %>% select(starts_with("HA3"))
+dfHA4 <- merg2 %>% select(starts_with("HA4"))
+dfHB3 <- merg2 %>% select(starts_with("HB3"))
+dfHB4 <- merg2 %>% select(starts_with("HB4"))
+dfHC3 <- merg2 %>% select(starts_with("HC3"))
+dfHC4 <- merg2 %>% select(starts_with("HC4"))
+
+
+tidy.HA3 <- tidy.dist(bray.xform.dist(dfHA3), "BrayDist") %>% filter(SampleID.y == "HA3_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "HA3")
+
+tidy.HB3 <- tidy.dist(bray.xform.dist(dfHB3), "BrayDist") %>% filter(SampleID.y == "HB3_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "HB3")
+
+tidy.HC3 <- tidy.dist(bray.xform.dist(dfHC3), "BrayDist") %>% filter(SampleID.y == "HC3_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "HC3")
+
+tidy.HA4 <- tidy.dist(bray.xform.dist(dfHA4), "BrayDist") %>% filter(SampleID.y == "HA4_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "HA4")
+
+tidy.HB4 <- tidy.dist(bray.xform.dist(dfHB4), "BrayDist") %>% filter(SampleID.y == "HB4_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "HB4")
+
+tidy.HC4 <- tidy.dist(bray.xform.dist(dfHC4), "BrayDist") %>% filter(SampleID.y == "HC4_vir") %>% 
+  mutate(Site = substr(SampleID.x, 1,1), Rep = substr(SampleID.x, 2,2), Time = substr(SampleID.x, 3,3), Coverage = substr(SampleID.x, 5,7), Comparison = "HC4")
+
+tidyhop <- rbind(tidy.HA3, tidy.HA4, tidy.HB3, tidy.HB4, tidy.HC3, tidy.HC4)
+```
+
+```{r}
+(covang <- tidyang %>% filter(Coverage != "vir") %>% 
+  ggplot(aes(x = as.numeric(Coverage), y = BrayDist)) +
+  geom_smooth(method = "loess", color = "gray") +
+  geom_point(aes(fill = Comparison), pch = 21, size = 2, show.legend = FALSE) +
+  labs(title = "Angelo", x = "Coverage Breadth", y = "Viral Community Bray Curtis Dissimilarity"))
+
+(covhop <- tidyhop %>% filter(Coverage != "vir") %>% 
+  ggplot(aes(x = as.numeric(Coverage), y = BrayDist)) +
+  geom_smooth(method = "loess", color = "gray") +
+  geom_point(aes(fill = Comparison), pch = 21, size = 2, show.legend = FALSE) +
+  labs(title = "Hopland", x = "Coverage Breadth", y = "Viral Community Bray Curtis Dissimilarity"))
+
+
+```
+
+
+```{r}
+# Function to compare focal sample to another sample
+compare_otus <- function(data, focal_sample) {
+  other_samples <- setdiff(colnames(data), focal_sample)
+  
+  bind_rows(lapply(other_samples, function(sample_name) {
+    shared <- sum(data[[focal_sample]] == 1 & data[[sample_name]] == 1)  # Both present
+    unique_focal <- sum(data[[focal_sample]] == 1 & data[[sample_name]] == 0)  # Present in focal only
+    unique_other <- sum(data[[focal_sample]] == 0 & data[[sample_name]] == 1)  # Present in compared only
+    
+    # Exclude cases where both are zero
+    total_valid <- sum((data[[focal_sample]] == 1) | (data[[sample_name]] == 1))  # At least one sample has a 1
+    
+    data.frame(
+      Sample = sample_name,
+      Shared_OTUs = shared,
+      Unique_to_Virome = unique_focal,
+      Unique_to_Metagenome = unique_other,
+      Total_Valid_OTUs = total_valid  # Optional: useful for checking
+    )
+  }))
+}
+```
+
+```{r}
+dfAA3count <- dfAA3 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resAA3 <- compare_otus(dfAA3count, "AA3_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "AA3")
+
+dfAA4count <- dfAA4 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resAA4 <- compare_otus(dfAA4count, "AA4_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "AA4")
+
+dfAB3count <- dfAB3 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resAB3 <- compare_otus(dfAB3count, "AB3_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "AB3")
+
+dfAB4count <- dfAB4 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resAB4 <- compare_otus(dfAB4count, "AB4_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "AB4")
+
+dfAC3count <- dfAC3 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resAC3 <- compare_otus(dfAC3count, "AC3_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "AC3")
+
+dfAC4count <- dfAC4 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resAC4 <- compare_otus(dfAC4count, "AC4_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "AC4")
+
+angcountcomb <- rbind(resAA3, resAA4, resAB3, resAB4, resAC3, resAC4)
+```
+
+```{r}
+angcountlong <- angcountcomb %>% pivot_longer(cols = c(Shared_OTUs, Unique_to_Virome, Unique_to_Metagenome),
+               names_to = "OTU_Type",
+               values_to = "Count")
+
+(angcounts <- ggplot(angcountlong, aes(x = as.numeric(Coverage), y = Count)) + 
+  geom_point(aes(fill = Comparison), pch = 21, size = 2) +
+  facet_wrap(~OTU_Type, ncol = 3, scales = "free") + 
+  labs(title = "Angelo", x = "Coverage Breadth"))
+```
+
+```{r}
+dfHA3count <- dfHA3 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resHA3 <- compare_otus(dfHA3count, "HA3_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "HA3")
+
+dfHA4count <- dfHA4 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resHA4 <- compare_otus(dfHA4count, "HA4_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "HA4")
+
+dfHB3count <- dfHB3 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resHB3 <- compare_otus(dfHB3count, "HB3_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "HB3")
+
+dfHB4count <- dfHB4 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resHB4 <- compare_otus(dfHB4count, "HB4_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "HB4")
+
+dfHC3count <- dfHC3 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resHC3 <- compare_otus(dfHC3count, "HC3_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "HC3")
+
+dfHC4count <- dfHC4 %>% mutate(across(where(is.numeric), ~ifelse(. > 0, 1, 0)))
+resHC4 <- compare_otus(dfHC4count, "HC4_vir") %>% mutate(Coverage = substr(Sample, 5, 7), Comparison = "HC4")
+
+hopcountcomb <- rbind(resHA3, resHA4, resHB3, resHB4, resHC3, resHC4)
+```
+
+
+```{r}
+hopcountlong <- hopcountcomb %>% pivot_longer(cols = c(Shared_OTUs, Unique_to_Virome, Unique_to_Metagenome),
+               names_to = "OTU_Type",
+               values_to = "Count")
+
+(hopcounts  <- ggplot(hopcountlong, aes(x = as.numeric(Coverage), y = Count)) + 
+  geom_point(aes(fill = Comparison), pch = 21, size = 2) +
+  facet_wrap(~OTU_Type, ncol = 3, scales = "free") +
+    labs(title = "Hopland", x = "Coverage Breadth"))
+```
+
+
+```{r}
+(fig <- plot_grid(covang, angcounts, covhop, hopcounts, ncol = 2, rel_widths = c(1, 2, 1, 2), labels = c("A", "C", "B", "D")))
+ggsave("ViromevsMetagenomeCoverage.png", fig, dpi = 500, width = 13, height = 7)
+```
+
+

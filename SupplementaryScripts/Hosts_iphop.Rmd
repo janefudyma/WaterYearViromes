@@ -1,0 +1,441 @@
+---
+title: "Hosts through iphop"
+output: html_document
+date: "2025-04-24"
+---
+
+1. Preparing host table 
+```{r}
+# df2 <- read_csv('merged_Host_prediction_to_genus_m90.csv')
+# 
+# onehost <- df2 %>%
+#   group_by(Virus) %>%
+#   slice_max(order_by = `Confidence score`, n = 1) %>%
+#   ungroup()
+# 
+# onehost2 <- onehost %>% mutate(phylum = str_extract(`Host genus`, "p__[^;]+") %>% str_remove("p__"))%>% 
+#             mutate(domain = str_extract(`Host genus`, "d__[^;]+") %>% str_remove("d__")) %>% 
+#             mutate(class = str_extract(`Host genus`, "c__[^;]+") %>% str_remove("c__")) %>% 
+#             mutate(order = str_extract(`Host genus`, "o__[^;]+") %>% str_remove("o__")) %>% 
+#             mutate(family = str_extract(`Host genus`, "f__[^;]+") %>% str_remove("f__"))  %>% 
+#             mutate(genus = str_extract(`Host genus`, "g__[^;]+") %>% str_remove("g__"))
+# 
+# write_csv(onehost2,'2501_iphop_predictions_onehost.csv')
+```
+
+2. Hosts from viromes
+#this is also in spatial script
+```{r}
+#metadata table
+meta <- read.csv("../../2412_metadataALL.csv")
+
+all.m <- meta
+angelo.m <- meta[meta$Site == 'Angelo', ]
+hopland.m <- meta[meta$Site == 'Hopland', ]
+
+otutable <- read_csv('../../2407_normalizedabundancetable_singremoved.csv')
+predictedhost <- read_csv("../../2501_iphop_predictions_onehost.csv")
+
+otutablcomb <- otutable %>% left_join(predictedhost, by = c("...1" = "Virus")) 
+
+ang.host <- otutablcomb  %>%
+  group_by(phylum) %>%
+  summarise(across(AA10_1:AC4_2, sum, na.rm = TRUE)) %>% 
+  filter(phylum != "NA")
+
+hop.host <- otutablcomb  %>%
+  group_by(phylum) %>%
+  summarise(across(HA10_1:HC4_2, sum, na.rm = TRUE)) %>% 
+  filter(phylum != "NA") %>% 
+  filter(rowSums(across(where(is.numeric)))!=0)
+
+ang.host.long <- ang.host %>% 
+  pivot_longer(-phylum, values_to = "abundance", names_to = "SampleID") %>% 
+  left_join(angelo.m, by = "SampleID")
+
+hop.host.long <- hop.host %>% 
+  pivot_longer(-phylum, values_to = "abundance", names_to = "SampleID") %>% 
+  left_join(hopland.m, by = "SampleID")
+```
+
+```{r}
+# Function to test normality and apply appropriate significance tests
+test_significance <- function(data) {
+  results <- data %>%
+    group_by(phylum) %>%
+    summarise(
+      shapiro_p = shapiro.test(abundance)$p.value,  # Normality test
+      normal = ifelse(shapiro_p > 0.05, "Yes", "No"),  # If p > 0.05, data is normal
+      test_type = ifelse(normal == "Yes", "ANOVA", "Kruskal-Wallis"),
+      p_value = ifelse(normal == "Yes", 
+                       anova_test(data, abundance ~ Rep)$p,  # ANOVA if normal
+                       kruskal.test(abundance ~ Rep)$p.value)  # Kruskal-Wallis if not
+    ) %>%
+    ungroup()
+    #filter(p_value < 0.05)  # Keep only significant phyla
+  
+  return(results)
+}
+
+# Function to do pairwise post-hoc tests
+pairwise_tests <- function(data, phylum, test_type) {
+  subset_data <- data %>% filter(phylum == !!phylum)
+  
+  if (test_type == "ANOVA") {
+    # Tukey's HSD for parametric
+    result <- subset_data %>% tukey_hsd(abundance ~ Rep)
+  } else {
+    # Dunn's test for non-parametric
+    result <- subset_data %>% dunn_test(abundance ~ Rep, p.adjust.method = "bonferroni")
+  }
+  
+  result$phylum <- phylum  # Add phylum info
+  return(result)
+}
+
+#apply function and get pairwise comparisons
+ang_results <- test_significance(ang.host.long)
+hop_results <- test_significance(hop.host.long)
+ang_pairwise <- map2_df(ang_results$phylum, ang_results$test_type, ~pairwise_tests(ang.host.long, .x, .y))
+hop_pairwise <- map2_df(hop_results$phylum, hop_results$test_type, ~pairwise_tests(hop.host.long, .x, .y))
+
+write.csv(ang_pairwise, "angelopairwisehostsspatial-viromes.csv")
+write.csv(hop_pairwise, "hoplandpairwisehostsspatial-viromes.csv")
+
+#get most abundant predicted hosts in dataset
+ang.host.long %>% group_by(phylum) %>% summarise(TotalAbundance = sum(abundance)) %>% arrange(desc(TotalAbundance))
+hop.host.long %>% group_by(phylum) %>% summarise(TotalAbundance = sum(abundance)) %>% arrange(desc(TotalAbundance))
+```
+
+```{r}
+#angelo
+sig_ang <- ang_pairwise %>% filter(p.adj < 0.05)
+
+ang_max_y <- ang.host.long %>%
+  group_by(phylum) %>%
+  summarise(y.position = max(abundance, na.rm = TRUE) * 1.1, .groups = "drop")
+
+rep_levels <- c("A" = 1, "B" = 2, "C" = 3)
+
+sig_ang_annot <- sig_ang %>%
+  mutate(xmin = rep_levels[group1],
+         xmax = rep_levels[group2]) %>%
+  left_join(ang_max_y, by = "phylum") %>%
+  mutate(
+    comparison = paste0(group1, "_vs_", group2),
+    offset = case_when(
+      comparison == "A_vs_B" ~ 0.05,
+      comparison == "A_vs_C" ~ 0.10,
+      comparison == "B_vs_C" ~ 0.15,
+      TRUE ~ 0.05  # default
+    ),
+    y.position = y.position + offset * y.position,
+    label = p.adj.signif
+  )
+
+(anghostplot <- ggplot(ang.host.long, aes(x = Rep, y = abundance)) + geom_boxplot() + facet_wrap(~phylum, scales = "free") + labs(title = "Angelo Predicted Hosts", x = "Sampling Zone") +
+  geom_segment(data = sig_ang_annot,
+               aes(x = xmin, xend = xmax, y = y.position, yend = y.position),
+               inherit.aes = FALSE) +
+  geom_text(data = sig_ang_annot,
+            aes(x = (xmin + xmax) / 2, y = y.position + 0.05 * y.position, label = label),
+            inherit.aes = FALSE, size = 3))
+
+#hopland
+sig_hop <- hop_pairwise %>% filter(p.adj < 0.05)
+
+hop_max_y <- hop.host.long %>%
+  group_by(phylum) %>%
+  summarise(y.position = max(abundance, na.rm = TRUE) * 1.1, .groups = "drop")
+
+rep_levels <- c("A" = 1, "B" = 2, "C" = 3)
+
+sig_hop_annot <- sig_hop %>%
+  mutate(xmin = rep_levels[group1],
+         xmax = rep_levels[group2]) %>%
+  left_join(hop_max_y, by = "phylum") %>%
+  mutate(
+    comparison = paste0(group1, "_vs_", group2),
+    offset = case_when(
+      comparison == "A_vs_B" ~ 0.05,
+      comparison == "A_vs_C" ~ 0.10,
+      comparison == "B_vs_C" ~ 0.15,
+      TRUE ~ 0.05  # default
+    ),
+    y.position = y.position + offset * y.position,
+    label = p.adj.signif
+  )
+
+(hophostplot <- ggplot(hop.host.long, aes(x = Rep, y = abundance)) + geom_boxplot() + facet_wrap(~phylum, scales = "free") + labs(title = "Hopland Predicted Hosts", x = "Sampling Zone") +
+  geom_segment(data = sig_hop_annot,
+               aes(x = xmin, xend = xmax, y = y.position, yend = y.position),
+               inherit.aes = FALSE) +
+  geom_text(data = sig_hop_annot,
+            aes(x = (xmin + xmax) / 2, y = y.position + 0.05 * y.position, label = label),
+            inherit.aes = FALSE, size = 3))
+
+
+(hostplotsvir <- plot_grid(anghostplot, hophostplot, ncol = 2, labels = c("A", "B")))
+ggsave("HostPlotsforViromes_byRep.png", hostplotsvir, width = 15, height = 8)
+```
+
+
+####################
+Metagenomes by Depth
+####################
+
+```{r}
+otu <- read.csv('../../2502.allWY.mg.covm.5.mean.tsv', sep = "\t") %>% column_to_rownames(var = 'Contig')
+otu2 <- otu %>% rename_with(~ str_extract(., "(?<=WaterYear_).*?(?=_t0_mapped.sort.90filt.Mean)"))
+otuall <- otu2 
+
+metaall <- read.csv('../../2503_Metadatafinal_metagenomes.csv')
+otuall.count <- otuall %>% mutate_if(is.numeric, ~1 * (. != 0)) %>% rownames_to_column(var = "Virus") %>% pivot_longer(-Virus, values_to = "Present", names_to = "Sample") %>% filter(Present > 0) %>% left_join(metaall, by = c("Sample" = "sample_name"))
+
+hosts <- read.csv("../../2501_iphop_predictions_onehost.csv")
+
+otu_rel_abund_a <- otuall.count %>% filter(Site == "A") %>% left_join(hosts, by = "Virus") %>% 
+  group_by(Sample) %>%
+  mutate(sample_total = sum(Present, na.rm = TRUE),
+         rel_abund = Present/ sample_total) %>%
+  ungroup()
+
+phylum_sample_rel_abund_a <- otu_rel_abund_a %>%
+  group_by(Sample, phylum, Depth) %>%
+  summarize(rel_abund = sum(rel_abund), .groups = "drop")
+
+phylum_stats_a <- phylum_sample_rel_abund_a %>%
+  group_by(phylum) %>%
+  filter(n() > 8) %>%  
+  ungroup() %>%
+  group_by(phylum) %>%
+  summarise(
+    kruskal_test = list(kruskal.test(rel_abund ~ Depth)),
+    .groups = "drop"
+  ) %>%
+  mutate(kruskal_results = map(kruskal_test, tidy)) %>%
+  unnest(kruskal_results) %>%
+  select(phylum, statistic, p.value)
+
+pairwise_stats_a <- phylum_sample_rel_abund_a %>%
+  group_by(phylum) %>%
+  filter(n() > 8) %>%
+  dunn_test(rel_abund ~ Depth, p.adjust.method = "fdr") %>%
+  ungroup() 
+
+write.csv(pairwise_stats_a, "hostssignificantbydepth_angelo.csv")
+
+depth_levels <- c("1" = 1, "3" = 2, "5" = 3)
+
+sig_depth_a <- pairwise_stats_a %>%
+  filter(p.adj < 0.05)
+
+depth_max_y_a <- phylum_sample_rel_abund_a %>%
+  group_by(phylum) %>%
+  summarise(y.position = max(rel_abund, na.rm = TRUE) * 1.1, .groups = "drop")
+
+sig_depth_annot_a <- sig_depth_a %>%
+  mutate(
+    xmin = depth_levels[group1],
+    xmax = depth_levels[group2]
+  ) %>%
+  left_join(depth_max_y_a, by = "phylum") %>%
+  mutate(
+    comparison = paste0(group1, "_vs_", group2),
+    offset = case_when(
+      comparison == "1_vs_3" ~ 0.05,
+      comparison == "1_vs_5" ~ 0.10,
+      comparison == "3_vs_5" ~ 0.15,
+      TRUE ~ 0.05
+    ),
+    y.position = y.position + offset * y.position,
+    label = p.adj.signif
+  )
+
+(phl_a_annotated <- ggplot(phylum_sample_rel_abund_a, aes(x = Depth, y = rel_abund, fill = Depth)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, size = 1, alpha = 0.4) +
+  facet_wrap(~ phylum, scales = "free_y") +
+  labs(title = "Relative Abundance of vOTUs Predicted to Infect Phyla Across Depths in Angelo",
+       x = "Soil Depth (cm)",
+       y = "vOTU Relative Abundance") +
+    scale_x_discrete(labels = c(
+  "1" = "0-10",
+  "3" = "20-30",
+  "5" = "50-80")) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  geom_segment(data = sig_depth_annot_a,
+               aes(x = xmin, xend = xmax, y = y.position, yend = y.position),
+               inherit.aes = FALSE) +
+  geom_text(data = sig_depth_annot_a,
+            aes(x = (xmin + xmax) / 2, y = y.position + 0.01 * y.position, label = label),
+            inherit.aes = FALSE, size = 3))
+
+
+
+
+otu_rel_abund_h <- otuall.count %>% filter(Site == "H") %>% left_join(hosts, by = "Virus") %>% 
+  group_by(Sample) %>%
+  mutate(sample_total = sum(Present, na.rm = TRUE),
+         rel_abund = Present/ sample_total) %>%
+  ungroup()
+
+phylum_sample_rel_abund_h <- otu_rel_abund_h %>%
+  group_by(Sample, phylum, Depth) %>%
+  summarize(rel_abund = sum(rel_abund), .groups = "drop")
+
+phylum_stats_h <- phylum_sample_rel_abund_h %>%
+  group_by(phylum) %>%
+  filter(n() > 8) %>%  
+  ungroup() %>%
+  group_by(phylum) %>%
+  summarise(
+    kruskal_test = list(kruskal.test(rel_abund ~ Depth)),
+    .groups = "drop"
+  ) %>%
+  mutate(kruskal_results = map(kruskal_test, tidy)) %>%
+  unnest(kruskal_results) %>%
+  select(phylum, statistic, p.value)
+
+pairwise_stats_h <- phylum_sample_rel_abund_h %>%
+  group_by(phylum) %>%
+  filter(n() > 8) %>%
+  dunn_test(rel_abund ~ Depth, p.adjust.method = "fdr") %>%
+  ungroup() 
+
+write.csv(pairwise_stats_h, "hostssignificantbydepth_hopland.csv")
+
+depth_levels <- c("1" = 1, "3" = 2, "5" = 3)
+
+sig_depth_h <- pairwise_stats_h %>%
+  filter(p.adj < 0.05)
+
+depth_max_y <- phylum_sample_rel_abund_h %>%
+  group_by(phylum) %>%
+  summarise(y.position = max(rel_abund, na.rm = TRUE) * 1.1, .groups = "drop")
+
+sig_depth_annot <- sig_depth_h %>%
+  mutate(
+    xmin = depth_levels[group1],
+    xmax = depth_levels[group2]
+  ) %>%
+  left_join(depth_max_y, by = "phylum") %>%
+  mutate(
+    comparison = paste0(group1, "_vs_", group2),
+    offset = case_when(
+      comparison == "1_vs_3" ~ 0.05,
+      comparison == "1_vs_5" ~ 0.10,
+      comparison == "3_vs_5" ~ 0.15,
+      TRUE ~ 0.05
+    ),
+    y.position = y.position + offset * y.position,
+    label = p.adj.signif
+  )
+
+# Add the annotations to your existing plot
+(phl_h_annotated <- ggplot(phylum_sample_rel_abund_h, aes(x = Depth, y = rel_abund, fill = Depth)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, size = 1, alpha = 0.4) +
+  facet_wrap(~ phylum, scales = "free_y") +
+  labs(title = "Relative Abundance of vOTUs Predicted to Infect Phyla Across Depths in Hopland",
+       x = "Soil Depth (cm)",
+       y = "vOTU Relative Abundance") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  geom_segment(data = sig_depth_annot,
+               aes(x = xmin, xend = xmax, y = y.position, yend = y.position),
+               inherit.aes = FALSE) +
+        scale_x_discrete(labels = c(
+  "1" = "0-10",
+  "3" = "20-30",
+  "5" = "50-80")) +
+  geom_text(data = sig_depth_annot,
+            aes(x = (xmin + xmax) / 2, y = y.position + 0.01 * y.position, label = label),
+            inherit.aes = FALSE, size = 3))
+
+
+(depthhostsplot <- plot_grid(phl_a_annotated, phl_h_annotated, ncol = 2, labels = c("A", "B")))
+ggsave("HostPlotsforMetaGs_byDepth.png", depthhostsplot, width = 20, height = 12)
+```
+
+Rep by depth
+```{r}
+phylum_relabund_depthrep_a <- otu_rel_abund_a %>%
+  group_by(Sample, phylum, Depth, Rep) %>%
+  summarize(rel_abund = sum(rel_abund), .groups = "drop")
+
+phylum_stats_depthrep_a <- phylum_relabund_depthrep_a  %>%
+  group_by(phylum, Depth) %>%
+  filter(n() > 2) %>%  
+  ungroup() %>%
+  group_by(phylum, Depth) %>%
+  summarise(
+    kruskal_test = list(kruskal.test(rel_abund ~ Rep)),
+    .groups = "drop"
+  ) %>%
+  mutate(kruskal_results = map(kruskal_test, tidy)) %>%
+  unnest(kruskal_results) %>%
+  select(phylum, Depth, statistic, p.value)
+
+#no significant
+
+phylum_relabund_depthtime_a <- otu_rel_abund_a %>%
+  group_by(Sample, phylum, Depth, Time) %>%
+  summarize(rel_abund = sum(rel_abund), .groups = "drop")
+
+phylum_stats_depthtime_a <- phylum_relabund_depthtime_a  %>%
+  group_by(phylum, Depth) %>%
+  filter(n() > 1) %>%  
+  ungroup() %>%
+  group_by(phylum, Depth) %>%
+  summarise(
+    kruskal_test = list(kruskal.test(rel_abund ~ Time)),
+    .groups = "drop"
+  ) %>%
+  mutate(kruskal_results = map(kruskal_test, tidy)) %>%
+  unnest(kruskal_results) %>%
+  select(phylum, Depth, statistic, p.value)
+#one signifcant phyla by time - Depth 1 actinomycetota
+
+phylum_relabund_depthrep_h <- otu_rel_abund_h %>%
+  group_by(Sample, phylum, Depth, Rep) %>%
+  summarize(rel_abund = sum(rel_abund), .groups = "drop")
+
+phylum_stats_depthrep_h <- phylum_relabund_depthrep_h  %>%
+  group_by(phylum, Depth) %>%
+  filter(n() > 5) %>%  
+  ungroup() %>%
+  group_by(phylum, Depth) %>%
+  summarise(
+    kruskal_test = list(kruskal.test(rel_abund ~ Rep)),
+    .groups = "drop"
+  ) %>%
+  mutate(kruskal_results = map(kruskal_test, tidy)) %>%
+  unnest(kruskal_results) %>%
+  select(phylum, Depth, statistic, p.value)
+#one phyla is significant (nitrosporota in depth1)
+
+phylum_relabund_depthtime_h <- otu_rel_abund_h %>%
+  group_by(Sample, phylum, Depth, Time) %>%
+  summarize(rel_abund = sum(rel_abund), .groups = "drop")
+
+phylum_stats_depthtime_h <- phylum_relabund_depthtime_h  %>%
+  group_by(phylum, Depth) %>%
+  filter(n() > 5) %>%  
+  ungroup() %>%
+  group_by(phylum, Depth) %>%
+  summarise(
+    kruskal_test = list(kruskal.test(rel_abund ~ Time)),
+    .groups = "drop"
+  ) %>%
+  mutate(kruskal_results = map(kruskal_test, tidy)) %>%
+  unnest(kruskal_results) %>%
+  select(phylum, Depth, statistic, p.value)
+
+hopsigdepthtime <- phylum_stats_depthtime_h %>% filter(p.value < 0.05)
+
+#one host phyla actinomycetota and the non-classified hosts are significant by time in depth 3
+
+```
+

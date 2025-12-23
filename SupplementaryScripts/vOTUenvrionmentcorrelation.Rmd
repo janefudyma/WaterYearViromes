@@ -1,0 +1,86 @@
+---
+title: "vOTU envrionment correlations"
+output: html_document
+date: "2025-04-28"
+---
+
+```{r}
+library(tidyverse)
+library(mgcv)
+```
+
+```{r}
+otu <- read.csv('../../2502.allWY.mg.covm.5.mean.tsv', sep = "\t") %>% column_to_rownames(var = 'Contig')
+otu2 <- otu %>% rename_with(~ str_extract(., "(?<=WaterYear_).*?(?=_t0_mapped.sort.90filt.Mean)"))
+
+otuang <- otu2 %>% select(starts_with("A"))
+otuhop <- otu2 %>% select(starts_with("H"))
+
+meta.a <- metaall %>% filter(sample_name %in% colnames(otuang))
+meta.h <- metaall %>% filter(sample_name %in% colnames(otuhop))
+```
+
+
+```{r}
+otuangzeros <- otuang %>% filter(rowSums(across(where(is.numeric)))!=0)
+vOTUsall <- as.data.frame(t(otuangzeros))
+vOTUsall <- vOTUsall[match(meta.a$sample_name, rownames(vOTUsall)), ]
+meta.a <- meta.a %>% mutate(Nitrogen = `Total_N(%)`)
+resid_nitrogen <- resid(gam(Nitrogen ~ Depth, data = meta.a))
+meta.a <- meta.a %>% mutate(Nitrogen_resid = resid_nitrogen)
+
+gam_results <- apply(vOTUsall, 2, function(vOTU) {
+  gam_fit <- bam(vOTU ~ s(Nitrogen_resid) + Rep + Depth, data = meta.a)
+  p_value <- summary(gam_fit)$s.table[1, 4]  
+  return(p_value)
+})
+
+adj_p_values_N <- p.adjust(gam_results, method = "fdr")
+sig_vOTUs <- names(adj_p_values_N[adj_p_values_N < 0.05]) #707
+
+(707/7718)*100
+
+#9.1604% of vOTU dataset correlated w/ depth
+
+df <- as.data.frame(sig_vOTUs)
+write.csv(df, "vOTUscorrelatedwithtotalN.csv")
+```
+
+```{r}
+otuhopzeros <- otuhop %>% filter(rowSums(across(where(is.numeric)))!=0)
+vOTUsallhop <- as.data.frame(t(otuhopzeros))
+resid_pH <- resid(gam(pH ~ Depth, data = meta.h))
+meta.h <- meta.h %>% mutate(pH_resid = resid_pH)
+
+gam_results_pH <- apply(vOTUsallhop, 2, function(vOTU) {
+  gam_fit <- bam(vOTU ~ s(pH_resid) + Rep + Depth, data = meta.h)
+  p_value <- summary(gam_fit)$s.table[1, 4]  
+  return(p_value)
+})
+
+adj_p_values_pH <- p.adjust(gam_results_pH, method = "fdr")
+sig_vOTUs_pH <- names(adj_p_values_pH[adj_p_values_pH < 0.05])
+
+(2/7098)*100
+```
+
+```{r}
+library(tidyverse)
+library(Biostrings)
+
+df2 <- df %>% mutate(Site = "Angelo", Variable = "Total N (%)")
+df3 <- as.data.frame(sig_vOTUs_pH) %>%  mutate(Site = "Hopland", Variable = "pH") %>% rename("sig_vOTUs_pH" = "sig_vOTUs")
+dfcomb <- rbind(df2, df3)
+
+# Read FASTA
+seqs <- readDNAStringSet("extracted_vOTUs.fa")
+seq_df <- tibble(vOTU = names(seqs), Sequence = as.character(seqs))
+
+# Merge metadata with sequences
+full <- left_join(dfcomb, seq_df, by = c("sig_vOTUs" = "vOTU"))
+
+full2 <- as.data.frame(full) 
+# Save to file
+write_csv(full2, "votu_metadata_with_sequences.csv")
+```
+

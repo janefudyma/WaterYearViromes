@@ -1,0 +1,9 @@
+*.png
+*.xlsx
+*.docx
+RHistory
+.DS_Store
+SupplementaryScripts/*.csv
+SupplementaryScripts/*.fa
+SupplementaryScripts/*.png
+SupplementaryScripts/*.svg
